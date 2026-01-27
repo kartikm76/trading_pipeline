@@ -1,0 +1,24 @@
+environment: "PROD"  # DEV or PROD
+
+polygon:
+  api_key: "HHpGzs6o8grnpP87fQirTCqMTEsERTyk"
+  base_url: "https://api.polygon.io"
+
+storage:
+  catalog_name: "glue_catalog"
+  db_name: "trading_db"
+
+  # Environment-specific configurations
+  dev:
+    warehouse: "./iceberg-warehouse/"
+    catalog_type: "hadoop"
+    raw_data_path: "./data/raw/SPY_option_chain.csv"
+
+  prod:
+    warehouse: "s3://trading-pipeline/iceberg-warehouse/"
+    catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
+    io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
+    raw_data_path: "s3://trading-pipeline/raw/SPY_option_chain.csv"
+
+strategy:
+  target_delta: -0.10

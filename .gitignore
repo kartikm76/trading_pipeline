@@ -1,0 +1,9 @@
+.idea
+iceberg-warehouse
+venv
+__pycache__
+codebase_snapshot.txt
+*.crc
+*.zip
+*.egg-info
+*.pyc
