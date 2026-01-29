@@ -18,7 +18,7 @@ storage:
     warehouse: "s3://trading-pipeline/iceberg-warehouse/"
     catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
     io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
-    raw_data_path: "s3://trading-pipeline/raw/SPY_option_chain.csv"
+    raw_data_path: "s3://trading-pipeline/data/raw/SPY_option_chain.csv"
 
 strategy:
   target_delta: -0.10

@@ -11,7 +11,10 @@ class ConfigManager:
 
     _instance: Optional['ConfigManager'] = None
     _config: Optional[dict] = None
-    _config_path: str = "resources/config.yaml"
+    _config_path = os.path.join(os.getcwd(), "config.yaml")
+    if not os.path.exists(_config_path):
+        # Fallback to your local project structure path
+        _config_path = os.path.join(os.path.dirname(__file__), "../../resources/config.yaml")
 
     def __new__(cls):
         """Ensure only one instance of ConfigManager exists."""
@@ -25,24 +28,23 @@ class ConfigManager:
             self._load_config()
 
     def _load_config(self):
-        """Load configuration from YAML file."""
-        config_file = ""
-        try:
-            # Get the project root directory (3 levels up from this file)
+        # 1. Look in the current working directory (Cloud/EMR behavior)
+        config_file = Path("config.yaml")
+
+        # 2. If not found, fall back to relative path (Local Mac behavior)
+        if not config_file.exists():
             project_root = Path(__file__).parent.parent.parent
-            config_file = project_root / self._config_path
+            config_file = project_root / "resources" / "config.yaml"
 
-            with open(config_file, "r") as f:
-                self._config = yaml.safe_load(f)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Could not find config.yaml at {config_file.absolute()}")
 
-            # Apply environment variable overrides
-            self._apply_env_overrides()
-            print(f"✓ Configuration loaded from {config_file}")
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Configuration file not found at {config_file}. "
-                f"Please ensure {self._config_path} exists."
-            )
+        with open(config_file, "r") as f:
+            self._config = yaml.safe_load(f)
+
+        # Apply environment variable overrides
+        self._apply_env_overrides()
+        print(f"Configuration loaded from {config_file}")
 
     def _apply_env_overrides(self):
         """Apply environment variable overrides to configuration."""
