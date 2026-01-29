@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+source $(dirname "$0")/.spark_conf
 
 # --- 1. SET PROJECT ROOT ---
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -73,25 +74,13 @@ fi
 # --- 6. SUBMIT JOB ---
 echo "🎯 Submitting Job to Application: $APP_ID"
 
-# Properly format parameters for JSON parsing
-SUBMIT_PARAMS="--py-files s3://${S3_BUCKET}/artifacts/src.zip "
-SUBMIT_PARAMS+="--files s3://${S3_BUCKET}/artifacts/config.yaml "
-SUBMIT_PARAMS+="--archives s3://${S3_BUCKET}/artifacts/pyspark_deps.tar.gz#environment "
-SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=./environment/bin/python "
-SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=./environment/bin/python "
-SUBMIT_PARAMS+="--conf spark.executorEnv.PYSPARK_PYTHON=./environment/bin/python "
-SUBMIT_PARAMS+="--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
-SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog "
-SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog "
-SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.warehouse=s3://${S3_BUCKET}/artifacts/warehouse"
-
 aws emr-serverless start-job-run \
   --application-id "$APP_ID" \
   --execution-role-arn "$EXECUTION_ROLE_ARN" \
   --job-driver "{
     \"sparkSubmit\": {
       \"entryPoint\": \"s3://${S3_BUCKET}/artifacts/main.py\",
-      \"sparkSubmitParameters\": \"$SUBMIT_PARAMS\"
+      \"sparkSubmitParameters\": \"'$SUBMIT_PARAMS'\"
     }
   }"
 

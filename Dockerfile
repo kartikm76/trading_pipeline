@@ -8,7 +8,7 @@ RUN pip3 install -r requirements.txt
 
 # Create app directory and copy the source code
 RUN mkdir -p /app/src
-COPY main.py /app/
+COPY src/main.py /app/
 COPY src /app/src
 
 # Set working directory

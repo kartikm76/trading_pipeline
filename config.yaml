@@ -1,24 +1,30 @@
-environment: "PROD"  # DEV or PROD
+project:
+  name: "IBOR Ecosystem - Phase 2a"
+  environment: "dev" # Toggle this to "prod" for AWS EMR runs
 
 polygon:
-  api_key: "HHpGzs6o8grnpP87fQirTCqMTEsERTyk"
+  api_key: "HHpGzs6o8grnpP87fQirTCqMTEsERTyk" # Note: Use Env Vars in Prod for security
   base_url: "https://api.polygon.io"
 
 storage:
   catalog_name: "glue_catalog"
   db_name: "trading_db"
+  table_name: "raw_options_chain"
 
-  # Environment-specific configurations
   dev:
     warehouse: "./iceberg-warehouse/"
     catalog_type: "hadoop"
-    raw_data_path: "./data/raw/SPY_option_chain.csv"
+    use_location_clause: false # Local usually manages its own paths
+    data_format: "parquet"
+    raw_data_path: "./data/raw/spy_tick_data_50gb.parquet"
 
   prod:
     warehouse: "s3://trading-pipeline/iceberg-warehouse/"
     catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
     io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
-    raw_data_path: "s3://trading-pipeline/data/raw/SPY_option_chain.csv"
+    use_location_clause: true # Essential for S3 bucket mapping
+    data_format: "parquet"
+    raw_data_path: "s3://trading-pipeline/data/raw/spy_tick_data_50gb.parquet"
 
 strategy:
   target_delta: -0.10

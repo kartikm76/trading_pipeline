@@ -63,7 +63,9 @@ JOB_RUN_ID=$(aws emr-serverless start-job-run \
     "sparkSubmit": {
       "entryPoint": "'"${S3_CODE_PATH}/main.py"'",
       "entryPointArguments": [],
-      "sparkSubmitParameters": "--conf spark.executor.cores=4 --conf spark.executor.memory=8g --conf spark.driver.cores=2 --conf spark.driver.memory=4g --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog --conf spark.sql.catalog.glue_catalog.warehouse='"${S3_BUCKET}/iceberg-warehouse/"' --conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO --conf spark.jars=/usr/share/aws/iceberg/lib/iceberg-spark3-runtime.jar --conf spark.archives='"${S3_CODE_PATH}/trading_pipeline.zip#pyfiles"' --py-files pyfiles/trading_pipeline.zip"
+      "sparkSubmitParameters":
+      "--conf spark.executor.cores=4
+      --conf spark.executor.memory=8g --conf spark.driver.cores=2 --conf spark.driver.memory=4g --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog --conf spark.sql.catalog.glue_catalog.warehouse='"${S3_BUCKET}/iceberg-warehouse/"' --conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO --conf spark.jars=/usr/share/aws/iceberg/lib/iceberg-spark-runtime-3.3_2.12-1.3.0.jar"
     }
   }' \
   --configuration-overrides '{

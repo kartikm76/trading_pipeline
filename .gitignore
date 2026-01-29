@@ -1,6 +1,7 @@
 .idea
 iceberg-warehouse
-venv
+infrastructure/dist
+.venv
 __pycache__
 codebase_snapshot.txt
 *.crc
