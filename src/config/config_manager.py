@@ -90,6 +90,11 @@ class ConfigManager:
         return self.get('storage.catalog_name')
 
     @property
+    def catalog_type(self) -> str:
+        """Returns 'hadoop' for local dev; not used in prod."""
+        return self._get_env_specific('catalog_type', 'hadoop')
+
+    @property
     def db_name(self) -> str:
         return self.get('storage.db_name')
 

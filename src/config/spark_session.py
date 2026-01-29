@@ -14,9 +14,6 @@ class SparkSessionBuilder:
         """
         Create or return the existing Spark session.
         Uses ConfigManager to get configuration.
-
-        Returns:
-            SparkSession: The singleton Spark session instance
         """
         if cls._instance is None or cls._instance._jsc is None:
             config = ConfigManager.get_instance()
@@ -27,8 +24,6 @@ class SparkSessionBuilder:
     def get_instance(cls) -> Optional[SparkSession]:
         """
         Get the existing Spark session instance without creating a new one.
-        Returns:
-            SparkSession or None: The existing Spark session or None if not created
         """
         return cls._instance
 
@@ -36,30 +31,28 @@ class SparkSessionBuilder:
     def _build_session(cls, config: ConfigManager) -> SparkSession:
         """
         Internal method to build the Spark session with Iceberg configurations.
-        Args:
-            config: ConfigManager instance
-        Returns:
-            SparkSession: Configured Spark session
         """
+        # Base configuration
+        # src/config/spark_session.py
         catalog_name = config.catalog
 
-        # Base configuration
-        catalog_name = config.catalog
+        # Base builder
         builder = SparkSession.builder \
             .appName("OptionChain-EMR-Pipeline") \
             .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
             .config(f"spark.sql.catalog.{catalog_name}", "org.apache.iceberg.spark.SparkCatalog") \
             .config(f"spark.sql.catalog.{catalog_name}.warehouse", config.warehouse)
 
-        # Added: Reference the pre-installed Iceberg JAR on EMR 7.1.0
-        if config.is_production:
+        if config.environment == 'prod':
+            # EMR 7.1.0 Optimized Path
             builder = builder.config("spark.jars", "/usr/share/aws/iceberg/lib/iceberg-spark3-runtime.jar")
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.catalog-impl", config.catalog_impl)
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.io-impl", config.io_impl)
         else:
-            # Keep your existing dev/local configuration
-            builder = builder.config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.7.1")
-            builder = builder.config(f"spark.sql.catalog.{catalog_name}.type", config.catalog_type)
+            # Local Dev Path - RE-ENABLED AND CORRECTED
+            # We use 1.6.1 to match Spark 3.5/Scala 2.12 perfectly
+            builder = builder.config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1")
+            builder = builder.config(f"spark.sql.catalog.{catalog_name}.type", "hadoop")
 
         return builder.getOrCreate()
 

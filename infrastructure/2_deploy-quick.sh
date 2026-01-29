@@ -1,87 +1,54 @@
 #!/bin/bash
-set -e
-source $(dirname "$0")/.spark_conf
-
-# --- 1. SET PROJECT ROOT ---
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-cd "$PROJECT_ROOT"
+set -e # Exit on error
 
 # --- CONFIGURATION ---
-S3_BUCKET="trading-pipeline"
-EXECUTION_ROLE_ARN="arn:aws:iam::949934295366:role/EMRServerlessRole"
-REGION="us-east-1"
-APP_NAME="TradingPipeline-Quick"
+S3_BUCKET="trading-pipeline" # Update to your actual bucket
 DIST_DIR="./dist"
-
-# Create dist directory if it doesn't exist
+LAST_HASH_FILE=".last_pyproject_hash"
 mkdir -p $DIST_DIR
 
-# --- 2. CONDITIONAL DEPENDENCY PACKAGING (The Slow Part) ---
-# We only run Docker if the tar.gz doesn't exist or requirements.txt is newer
-if [ ! -f "$DIST_DIR/pyspark_deps.tar.gz" ] || [ "requirements.txt" -nt "$DIST_DIR/pyspark_deps.tar.gz" ]; then
-    echo "📦 Requirements changed or missing. Rebuilding dependencies with Docker (Slow)..."
-    docker run --rm -v $(pwd):/app -w /app --platform linux/amd64 amazonlinux:2023 /bin/bash -c "
-      yum install -y python3 tar gzip zip
+echo "--- 🚀 Starting High-Hygiene Deployment ---"
+
+# --- 1. SOURCE SHARED CONFIG ---
+if [ -f "infrastructure/.spark_conf" ]; then
+    source infrastructure/.spark_conf
+else
+    echo "⚠️ Warning: .spark_conf not found. Using default parameters."
+fi
+
+# --- 2. CONDITIONAL DEPENDENCY PACKAGING (The 'uv' Way) ---
+# Calculate hash of pyproject.toml to detect changes
+PYPROJECT_HASH=$(shasum pyproject.toml | awk '{ print $1 }')
+
+if [ ! -f "$DIST_DIR/pyspark_deps.tar.gz" ] || [ ! -f "$LAST_HASH_FILE" ] || [ "$PYPROJECT_HASH" != "$(cat $LAST_HASH_FILE)" ]; then
+    echo "📦 Change detected in pyproject.toml or archive missing. Rebuilding with Docker..."
+
+    # We use a Dockerized uv export to ensure the environment is built for EMR (Amazon Linux 2023 / amd64)
+    docker run --rm -v $(pwd):/app -w /app --platform linux/amd64 ghcr.io/astral-sh/uv:latest /bin/bash -c "
+      apt-get update && apt-get install -y python3-venv tar gzip
+      uv export --format requirements-txt > /tmp/reqs.txt
       python3 -m venv venv_emr
       source venv_emr/bin/activate
       pip install --upgrade pip
-      pip install -r requirements.txt venv-pack
-      venv-pack -o /app/dist/pyspark_deps.tar.gz
+      pip install -r /tmp/reqs.txt venv-pack
+      venv-pack -o /app/dist/pyspark_deps.tar.gz -f
       rm -rf venv_emr
     "
+    echo "$PYPROJECT_HASH" > "$LAST_HASH_FILE"
+    echo "✅ Dependencies packaged successfully."
 else
-    echo "✅ Dependencies unchanged. Skipping Docker build (Fast)."
+    echo "⚡ No changes in pyproject.toml. Skipping dependency build."
 fi
 
-# --- 3. PACKAGE SOURCE CODE (The Fast Part) ---
-echo "⚡ Zipping source code and config..."
+# --- 3. SOURCE PACKAGING ---
+echo "📂 Packaging source code..."
+zip -r $DIST_DIR/src.zip src/ -x "*.pyc" "__pycache__/*" ".DS_Store"
 
-# Hard-reset the dist directory variable to be safe
-DIST_DIR="./dist"
-mkdir -p "$DIST_DIR"
+# --- 4. S3 SYNC ---
+echo "☁️ Syncing artifacts to S3: $S3_BUCKET"
+aws s3 cp $DIST_DIR/pyspark_deps.tar.gz s3://$S3_BUCKET/artifacts/
+aws s3 cp $DIST_DIR/src.zip s3://$S3_BUCKET/artifacts/
+aws s3 cp config.yaml s3://$S3_BUCKET/artifacts/
+aws s3 cp src/main.py s3://$S3_BUCKET/artifacts/
 
-# Explicitly remove the old zip to prevent "identity" errors
-rm -f "$DIST_DIR/src.zip"
-
-# Re-run the zip from the project root
-# We use quotes around the path to prevent expansion errors
-zip -r "$DIST_DIR/src.zip" src/
-
-# Copy the entry point and config
-cp main.py "$DIST_DIR/"
-cp config.yaml "$DIST_DIR/"
-
-echo "✅ Code packaged in $DIST_DIR"
-
-# --- 4. UPLOAD TO S3 ---
-echo "🚀 Uploading updated artifacts to S3..."
-aws s3 sync $DIST_DIR/ s3://${S3_BUCKET}/artifacts/ --delete
-
-# --- 5. ENSURE EMR APP EXISTS ---
-APP_ID=$(aws emr-serverless list-applications --query "applications[?name=='${APP_NAME}' && state=='CREATED'].id" --output text)
-
-if [ -z "$APP_ID" ]; then
-    echo "Creating new EMR Application..."
-    APP_ID=$(aws emr-serverless create-application \
-      --type "SPARK" \
-      --name "$APP_NAME" \
-      --release-label "emr-7.1.0" \
-      --query "applicationId" --output text)
-    sleep 10
-fi
-
-# --- 6. SUBMIT JOB ---
-echo "🎯 Submitting Job to Application: $APP_ID"
-
-aws emr-serverless start-job-run \
-  --application-id "$APP_ID" \
-  --execution-role-arn "$EXECUTION_ROLE_ARN" \
-  --job-driver "{
-    \"sparkSubmit\": {
-      \"entryPoint\": \"s3://${S3_BUCKET}/artifacts/main.py\",
-      \"sparkSubmitParameters\": \"'$SUBMIT_PARAMS'\"
-    }
-  }"
-
-echo "Job Submitted Successfully!"
+echo "--- ✅ Deployment Complete ---"
