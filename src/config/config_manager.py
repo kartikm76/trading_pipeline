@@ -82,8 +82,12 @@ class ConfigManager:
         return self._get_env_specific('raw_data_path')
 
     @property
-    def data_format(self) -> str:
-        return self._get_env_specific('data_format', 'csv')
+    def raw_data_format(self) -> str:
+        return self._get_env_specific('raw_data_format', 'csv')
+
+    @property
+    def iceberg_format(self) -> str:
+        return self._get_env_specific('iceberg_format', 'parquet')
 
     @property
     def catalog(self) -> str:

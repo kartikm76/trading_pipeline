@@ -1,10 +1,6 @@
 project:
   name: "IBOR Ecosystem - Phase 2a"
-  environment: "dev" # Toggle this to "prod" for AWS EMR runs
-
-polygon:
-  api_key: "HHpGzs6o8grnpP87fQirTCqMTEsERTyk" # Note: Use Env Vars in Prod for security
-  base_url: "https://api.polygon.io"
+  environment: "dev"
 
 storage:
   catalog_name: "glue_catalog"
@@ -14,17 +10,32 @@ storage:
   dev:
     warehouse: "./iceberg-warehouse/"
     catalog_type: "hadoop"
-    use_location_clause: false # Local usually manages its own paths
-    data_format: "parquet"
-    raw_data_path: "./data/raw/spy_tick_data_50gb.parquet"
+    use_location_clause: false
+    # NEW: Explicit format attributes
+    raw_data_format: "csv"
+    iceberg_format: "parquet"
+    raw_data_path: "./data/raw/opra-pillar-20250128.cbbo-1m.csv" # Pointing to the specific file
 
   prod:
     warehouse: "s3://trading-pipeline/iceberg-warehouse/"
     catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
     io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
-    use_location_clause: true # Essential for S3 bucket mapping
-    data_format: "parquet"
-    raw_data_path: "s3://trading-pipeline/data/raw/spy_tick_data_50gb.parquet"
+    use_location_clause: true
+    # NEW: Explicit format attributes
+    raw_data_format: "csv"
+    iceberg_format: "parquet"
+    raw_data_path: "s3://trading-pipeline/data/raw/"
+    write_mode: "merge-on-read"
+    format_version: "2"
 
-strategy:
-  target_delta: -0.10
+scaling:
+  bootstrap:
+    max_executors: 100
+    executor_memory: "16G"
+    driver_memory: "32G"
+    shuffle_partitions: 1000
+  daily:
+    max_executors: 20
+    executor_memory: "8G"
+    driver_memory: "8G"
+    shuffle_partitions: 200

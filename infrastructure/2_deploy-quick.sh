@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e # Exit on error
 
+# Capture the first argument, default to 'false'
+IS_BOOTSTRAP=${1:-false}
+
 # --- CONFIGURATION ---
 S3_BUCKET="trading-pipeline" # Update to your actual bucket
 DIST_DIR="./dist"
