@@ -1,13 +1,16 @@
 import requests
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
-from src.adapters.base_adapter import BaseAdapter
+from adapters.base_adapter import BaseAdapter
 
 class PolygonAdapter(BaseAdapter):
     def __init__(self, api_key: str, spark: SparkSession):
         self.api_key = api_key
         self.spark = spark
         self.base_url = "https://api.polygon.io"
+
+    def ingest(self, path: str, is_bootstrap: bool = False) -> DataFrame:
+        raise NotImplementedError("PolygonAdapter does not support ingestion.")
 
     def get_options_data(self, ticker: str, start_date: str, end_date: str) -> DataFrame:
         """

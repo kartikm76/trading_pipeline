@@ -1,13 +1,13 @@
 from pyspark.sql import SparkSession, DataFrame, functions as F
-from src.adapters.base_adapter import BaseAdapter
-from src.adapters.data_loader import PRODUCTION_SCHEMA
+from adapters.base_adapter import BaseAdapter
+from adapters.data_loader import PRODUCTION_SCHEMA
 
 class CSVAdapter(BaseAdapter):
-    def __init__(self, spark: SparkSession, config: dict):
+    def __init__(self, spark: SparkSession, config):
         self.spark = spark
         self.config = config
         # Path built once from config to avoid repeated lookups
-        self.full_table_path = f"{config['storage']['catalog_name']}.{config['storage']['db_name']}.{config['storage']['table_name']}"
+        self.full_table_path = f"{config.catalog}.{config.db_name}.{config.table_name}"
 
     def ingest(self, path: str, is_bootstrap: bool = False) -> DataFrame:
         """
@@ -26,7 +26,7 @@ class CSVAdapter(BaseAdapter):
         if is_bootstrap:
             # Scale-optimized for 200GB initial load
             writer.tableProperty("format-version", "2") \
-                .tableProperty("write.format.default", self.config['storage']['iceberg_format']) \
+                .tableProperty("write.format.default", self.config.iceberg_format) \
                 .tableProperty("write.update.mode", "merge-on-read") \
                 .partitionedBy(F.days("ts_recv")) \
                 .createOrReplace()

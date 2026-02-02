@@ -8,7 +8,7 @@ import pyarrow.parquet as pq
 INPUT_SAMPLE = "data/raw/SPY_option_chain.csv"
 
 # where the 50GB monster will live
-OUTPUT_PATH = "data/raw/spy_tick_data_50gb.parquet"
+OUTPUT_PATH = "data/old_files/spy_tick_data_50gb.parquet"
 
 def generate_50gb_dataset(base_df: pd.DataFrame, output_path, target_rows=430_000_000):
     """

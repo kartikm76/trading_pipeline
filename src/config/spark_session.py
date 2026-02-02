@@ -39,6 +39,9 @@ class SparkSessionBuilder:
         # Base builder
         builder = SparkSession.builder \
             .appName("OptionChain-EMR-Pipeline") \
+            .config("spark.sql.codegen.wholeStage", "false") \
+            .config("spark.driver.memory", "4g") \
+            .config("spark.executor.memory", "4g") \
             .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
             .config(f"spark.sql.catalog.{catalog_name}", "org.apache.iceberg.spark.SparkCatalog") \
             .config(f"spark.sql.catalog.{catalog_name}.warehouse", config.warehouse)

@@ -1,5 +1,5 @@
 project:
-  name: "IBOR Ecosystem - Phase 2a"
+  name: "Option Trading Pipeline"
   environment: "dev"
 
 storage:

@@ -1,66 +1,107 @@
-from adapters.adapter_factory import IngestorFactory
-from src.strategies.layman_spy_strategy import LaymanSPYStrategy
-from src.config import SparkSessionBuilder, ConfigManager
-from src.utils.iceberg_setup import IcebergTableManager
+from adapters.adapter_factory import AdapterFactory
+from strategies.layman_spy_strategy import LaymanSPYStrategy
+from config import SparkSessionBuilder, ConfigManager
+from utils.iceberg_setup import IcebergTableManager
+from pyspark.sql import functions as F
 import argparse
+import logging
 
-def main():
-    #0 -- Capture bootstrap flag
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+def initialize_config():
+    # --- 0. CAPTURE FLAGS ---
     parser = argparse.ArgumentParser()
     parser.add_argument("--bootstrap", action="store_true", help="Run initial 200GB load")
     args, unknown = parser.parse_known_args()
-
-    # --- 1. INITIALIZATION ---
     config = ConfigManager.get_instance()
     spark = SparkSessionBuilder.create()
+    return config, spark, args.bootstrap
 
-    # Try to get the flag from Spark properties (set by the shell script)
-    # or fall back to the CLI argument (used in local dev)
+def orchestrate(config, spark, bootstrap_mode):
+    # Determine if we are in bootstrap mode (200GB load)
     spark_bootstrap = spark.conf.get("spark.app.is_bootstrap", "false") == "true"
-    is_bootstrap = args.bootstrap or spark_bootstrap
+    is_bootstrap = bootstrap_mode or spark_bootstrap
 
-    # Delegate Initialization
     dba = IcebergTableManager(spark, config)
     strategy = LaymanSPYStrategy(underlying="SPY")
-
-    print(f"🚀 Starting Pipeline: {config.get('project.name')}")
+    logger.info("Starting Pipeline: %s", config.get('project.name'))
 
     # --- 2. INFRASTRUCTURE SETUP ---
-    dba.setup_infrastructure() # [cite: 75]
+    # Ensures the database/namespace exists in Iceberg
+    dba.setup_infrastructure()
 
-    # -- 3. Factory uses the new explicit 'raw_data_format' (csv)
-    ingestor = IngestorFactory.get_ingestor(config.raw_data_format, spark, config)
+    # --- 3. INGESTION (BRONZE) ---
+    # Factory provides the correct adapter (CSV/Parquet)
+    adapter = AdapterFactory.get_adapter(config.raw_data_format, spark, config)
 
-    # --4. Use the adapter to load raw data
-    raw_df = ingestor.ingest(path = config.raw_data_path, is_bootstrap=is_bootstrap)
+    # Ingest raw data into the Bronze table
+    logger.info("Ingesting raw data from: %s", config.raw_data_path)
+    raw_df = adapter.ingest(path=config.raw_data_path, is_bootstrap=is_bootstrap)
+    logger.info("Bronze Table Record Count: %s", raw_df.count())
 
     # --- 4. TRANSFORMATION (SILVER) ---
-    # We now use the 'materialize_view' mechanism for ALL business policies.
+    # We use the DataFrame API here to prevent "Bus Errors"
+    target_silver_table = f"{dba.db_prefix}.filtered_date"
+    logger.info("Materializing Silver Layer: %s", target_silver_table)
 
-    # Policy 1: 0DTE Filter
-    dba.materialize_view(
-        source_table=config.table_name,
-        target_table="filtered_date",
-        criteria="`Trade Date` = `Expiry Date`" # [cite: 85]
+    # a. Load from Bronze
+    bronze_df = spark.table(f"{dba.db_prefix}.{config.table_name}")
+
+    # b. Add business columns (Trade Date and Expiry Date)
+    # Expiry is extracted from the OSI symbol (YYMMDD at index 7)
+    refined_df = bronze_df.withColumn(
+        "expiry_date", F.to_date(F.substring(F.col("symbol"), 7, 6), "yyMMdd")
+    ).withColumn(
+        "trade_date", F.to_date(F.col("ts_recv"))
     )
 
-    # Policy 2: Out-of-the-Money (OTM) Filter
-    # Injected dynamically through the same infrastructure delegate
-    # dba.materialize_view(
-    #     source_table="filtered_date",
-    #     target_table="filtered_otm",
-    #     criteria="Strike > UnderlyingPrice" # [cite: 85]
-    # )
+    # c. Apply 0DTE Filter and Write to Iceberg
+    # Partitioning by trade_date is critical for 200GB performance
+    refined_df.filter("trade_date = expiry_date") \
+        .writeTo(target_silver_table) \
+        .partitionedBy(F.col("trade_date")) \
+        .createOrReplace()
 
     # --- 5. STRATEGY (GOLD) ---
     # Retrieve the refined silver data for signal generation
-    silver_df = spark.table(f"{dba.db_prefix}.filtered_date")
+    silver_df = spark.table(target_silver_table)
+    logger.info("Silver Table Record Count (0DTE): %s", silver_df.count())
 
-    gold_df = strategy.generate_signals(silver_df) # [cite: 59, 60]
-    gold_df.writeTo(f"{dba.db_prefix}.strategy_signals").createOrReplace()
+    # Apply strategy logic (defined in LaymanSPYStrategy)
+    gold_df = strategy.generate_signals(silver_df)
 
-    print("✅ Pipeline Orchestration Complete. All layers materialized in Iceberg.")
-    SparkSessionBuilder.stop()
+    # Finalize the Gold Layer
+    gold_table_path = f"{dba.db_prefix}.strategy_signals"
+    logger.info("Materializing Gold Layer: %s", gold_table_path)
+    gold_df.writeTo(gold_table_path).createOrReplace()
+
+    logger.info(f"Pipeline Orchestration Complete. Medallion layers materialized.")
+
+def verify_gold_layer(spark) -> None:
+    # Check the final Gold signals
+    signals = spark.table("glue_catalog.trading_db.strategy_signals")
+    logger.info("--- Sample Trading Signals ---")
+    signals.select("symbol", "mid_price", "signal").filter("signal != 'HOLD'").show(10)
+
+    # Verify the distribution of signals
+    logger.info("--- Signal Distribution ---")
+    signals.groupBy("signal").count().show()
+
+def clean_up(spark) -> None:
+    spark.stop()
+
+def main():
+    config, spark, bootstrap = initialize_config()
+    orchestrate(config, spark, bootstrap)
+    verify_gold_layer(spark)
+    clean_up(spark)
 
 if __name__ == "__main__":
+    logger.info("Starting Pipeline")
     main()
+    logger.info("Pipeline Completed")
