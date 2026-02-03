@@ -1,4 +1,5 @@
-SUBMIT_PARAMS="--py-files s3://${S3_BUCKET}/artifacts/src.zip "
+SUBMIT_PARAMS="--conf spark.app.is_bootstrap=${IS_BOOTSTRAP} "
+SUBMIT_PARAMS+="--py-files s3://${S3_BUCKET}/artifacts/src.zip "
 SUBMIT_PARAMS+="--files s3://${S3_BUCKET}/artifacts/config.yaml "
 SUBMIT_PARAMS+="--archives s3://${S3_BUCKET}/artifacts/pyspark_deps.tar.gz#environment "
 SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=./environment/bin/python "
@@ -7,4 +8,4 @@ SUBMIT_PARAMS+="--conf spark.executorEnv.PYSPARK_PYTHON=./environment/bin/python
 SUBMIT_PARAMS+="--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
 SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog "
 SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog "
-SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.warehouse=s3://${S3_BUCKET}/artifacts/warehouse"
+SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO "

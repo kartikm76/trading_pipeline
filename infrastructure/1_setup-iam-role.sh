@@ -23,7 +23,7 @@ cat > /tmp/trust-policy.json <<EOF
     {
       "Effect": "Allow",
       "Principal": {
-        "Service": "emr-serverless.amazonaws.com"
+        "Service": "ops.emr-serverless.amazonaws.com"
       },
       "Action": "sts:AssumeRole"
     }
@@ -47,7 +47,9 @@ cat > /tmp/permissions-policy.json <<EOF
         "s3:GetObject",
         "s3:PutObject",
         "s3:DeleteObject",
-        "s3:ListBucket"
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:AbortMultipartUpload"
       ],
       "Resource": [
         "arn:aws:s3:::trading-pipeline/*",
@@ -69,16 +71,22 @@ cat > /tmp/permissions-policy.json <<EOF
         "glue:GetPartition",
         "glue:GetPartitions"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:glue:us-east-1:${AWS_ACCOUNT_ID}:catalog",
+        "arn:aws:glue:us-east-1:${AWS_ACCOUNT_ID}:database/trading_db",
+        "arn:aws:glue:us-east-1:${AWS_ACCOUNT_ID}:table/trading_db/*"
+      ]
     },
     {
       "Effect": "Allow",
       "Action": [
         "logs:CreateLogGroup",
         "logs:CreateLogStream",
-        "logs:PutLogEvents"
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:logs:*:*:*"
     }
   ]
 }

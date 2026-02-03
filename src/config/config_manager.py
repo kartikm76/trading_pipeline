@@ -116,6 +116,15 @@ class ConfigManager:
         """Returns the base warehouse path (local dir or S3 URI)."""
         return self._get_env_specific('warehouse')
 
+    @property
+    def catalog_impl(self) -> str:
+        # Looks for 'catalog_impl' in the active environment (prod/dev)
+        return self._get_env_specific('catalog_impl')
+
+    @property
+    def io_impl(self) -> str:
+        return self._get_env_specific("io_impl")
+
     def reload(self):
         """Reload configuration from YAML file."""
         self._config = None

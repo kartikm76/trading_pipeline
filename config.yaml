@@ -1,6 +1,6 @@
 project:
   name: "Option Trading Pipeline"
-  environment: "dev"
+  environment: "prod"
 
 storage:
   catalog_name: "glue_catalog"
