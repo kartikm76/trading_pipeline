@@ -201,7 +201,7 @@ ENV=dev uv run python src/main.py --bootstrap
 1. ✅ Creates local Iceberg catalog (Hadoop-based)
 2. ✅ Reads CSV from `./data/raw/` directory
 3. ✅ Creates Bronze table with raw data
-4. ✅ Creates Silver table with enriched data
+4. ✅ Creates Silver table with enriched data (decomposed OSI symbols + any active filters)
 5. ✅ Creates Gold table with trading signals
 6. ✅ Stores tables in `./iceberg-warehouse/`
 
@@ -292,6 +292,19 @@ Use `batch_control.sh` for bulk file processing:
 1. **Batch 1** (First 15 files): Runs in `bootstrap` mode → Creates tables
 2. **Batch 2+** (Next 15 files each): Runs in `daily` mode → Appends data
 3. Files move: `landing/` → `staging/` → `processed/`
+
+> **📌 NOTE: Why 15 Files Per Batch?**
+>
+> The batch size of **15 files** is optimized for AWS personal account resource constraints:
+> - **AWS Free Tier Limit**: 16 vCPUs available
+> - **Worker Allocation**: 4 worker threads required for Spark processing
+> - **Optimal Batch Size**: 15 files maximizes throughput without exceeding vCPU limits
+>
+> **Performance Metrics:**
+> - **File Size**: ~1.5 GB each
+> - **Records per File**: ~10 million records
+> - **Processing Time**: ~5 minutes per batch (15 files)
+> - **Total Data per Batch**: ~22.5 GB, ~150 million records
 
 **Sample Output:**
 ```

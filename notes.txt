@@ -15,6 +15,7 @@ aws s3 mv s3://trading-pipeline/data/raw/staging/ s3://trading-pipeline/data/raw
 aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
 
 2. Drop Tables:
+aws glue delete-table --database-name "trading_db" --name "strategy_signals"
 aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
 aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
 
