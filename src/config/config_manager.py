@@ -150,5 +150,14 @@ class ConfigManager:
         filters = self.get('filters', [])
         return [f['class'] for f in filters if f.get('active') == 'Y']
 
+    # --- UNDERLYING MAPPING ---
+    @property
+    def underlying_mapping(self) -> dict:
+        """
+        Returns the mapping of option symbols to tradeable underlyings.
+        Example: {'SPX': 'SPY', 'NDX': 'QQQ'}
+        """
+        return self.get('underlying_mapping', {})
+
     def __repr__(self) -> str:
         return f"<ConfigManager(env='{self.environment}', catalog='{self.catalog}')>"

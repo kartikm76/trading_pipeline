@@ -9,9 +9,9 @@ from config.spark_session import SparkSessionBuilder
 # Create Spark session (ConfigManager is handled internally)
 spark = SparkSessionBuilder.create()
 
-# Show schema
+# Show schema with data types
 print("\n=== Silver Table Schema ===")
-spark.sql("DESCRIBE glue_catalog.trading_db.enriched_options_silver").show(truncate=False)
+spark.table("glue_catalog.trading_db.enriched_options_silver").printSchema()
 
 # Show sample data
 print("\n=== Sample Data (5 rows) ===")

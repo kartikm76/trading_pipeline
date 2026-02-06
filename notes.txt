@@ -1,6 +1,7 @@
 Next Steps for Implementation
-Update ConfigManager: Ensure your Python configuration parser is updated to read these nested scaling blocks based on the active environment.
+find . \( -path "./venv" -o -name "dist" -o -name ".git" \) -prune \
+-o -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yaml" -o -name "requirements.txt" \) \
+-exec echo "--- FILE: {} ---" \; -exec cat {} \; > codebase_snapshot.txt
 
-Centralize Enrichment: Now that the paths are set, the orchestrate function should be modified to read from the landing path, perform the option_type and trade_date extractions, and write to the silver_table_name defined in the common props.
-
-Local Test: Run one single file through the dev config. If the extraction logic correctly populates the Silver table with trade_date and mid_price, we can then trigger the 10-file batch loop.
+uv run python src/main.py --bootstrap
+uv run python tests/inspect_tables.py
