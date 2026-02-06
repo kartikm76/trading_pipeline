@@ -219,14 +219,15 @@ Processing 10M+ records...
 Appends new data without recreating tables:
 
 ```bash
-ENV=dev uv run python src/main.py
+ENV=dev 
+uv run python src/main.py
 ```
 
 **What happens:**
 1. ✅ Reads new CSV files from `./data/raw/`
 2. ✅ Appends to existing Bronze table
-3. ✅ Appends to existing Silver table
-4. ✅ Appends to existing Gold table
+3. ✅ Appends to existing Silver table (decomposed OSI symbols + any active filters)
+4. ✅ Appends to existing Gold table (strategy signals)
 
 ### Inspect Local Tables
 ```bash

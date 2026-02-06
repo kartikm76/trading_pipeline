@@ -16,3 +16,7 @@ SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg
 SUBMIT_PARAMS+="--conf spark.dynamicAllocation.enabled=false "
 # 2. Hard-cap the instances to exactly what's in the YAML
 SUBMIT_PARAMS+="--conf spark.executor.instances=${MAX_EXECS} "
+# Give executors 100GB to handle the 25-file shuffle
+SUBMIT_PARAMS+="--conf spark.emr-serverless.executor.disk=100G "
+# It's usually a good idea to give the driver a bit more too, though 20G is often fine
+SUBMIT_PARAMS+="--conf spark.emr-serverless.driver.disk=50G "

@@ -3,29 +3,23 @@ find . \( -path "./venv" -o -name "dist" -o -name ".git" \) -prune \
 -o -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yaml" -o -name "requirements.txt" \) \
 -exec echo "--- FILE: {} ---" \; -exec cat {} \; > codebase_snapshot.txt
 
+# Local Bootstrap
 uv run python src/main.py --bootstrap
 uv run python tests/inspect_tables.py
 
+# Production Bootstrap
+
+# Steps before each run:
+1. # Move everything back to landing
 aws s3 mv s3://trading-pipeline/data/raw/staging/ s3://trading-pipeline/data/raw/landing/ --recursive
 aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
 
-## Clean up staging and processed
-aws s3 rm s3://trading-pipeline/data/raw/staging/ --recursive
-aws s3 rm s3://trading-pipeline/data/raw/processed/ --recursive
-
-Steps before each run:
-1. Drop Tables:
+2. Drop Tables:
 aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
 aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
 
-2. Clean S3:
+3. Clear the warehouse physical files
 aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 
-3. Run: ./batch_control.sh prod.
-
-
-When you finally start the big run, here is what happens automatically:
-Step,Mode,Deployment,Table Action
-Batch 1 (First 15 files),bootstrap,Uploads Code,createOrReplace (Clean start)
-Batch 2 (Next 15 files),daily,Skips Upload*,append (Delta update)
-Batch 3... (Remainder),daily,Skips Upload*,append (Delta update)
+4. Run:
+./batch_control.sh prod
