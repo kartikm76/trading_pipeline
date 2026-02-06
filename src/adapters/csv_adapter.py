@@ -16,9 +16,9 @@ class CSVAdapter(BaseAdapter, ABC):
     def ingest(self, path: str, is_bootstrap: bool = False) -> DataFrame:
         df = self.spark.read.format(self.raw_format).option("header", "true").option("inferSchema", "true").load(path)
 
-        # Add file_name column from the input path
-        file_name = path.split("/")[-1]  # Extract filename from path
-        df = df.withColumn("file_name", F.lit(file_name))
+        # Add file_name column - extract just the filename from the full path
+        # input_file_name() returns the full path, we extract just the filename
+        df = df.withColumn("file_name", F.regexp_extract(F.input_file_name(), r"([^/]+)$", 1))
 
         target_table = self.config.get_table_path('bronze')
 

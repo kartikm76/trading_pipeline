@@ -1,64 +1,52 @@
 #!/bin/bash
 set -e
 
-# --- 1. CAPTURE ARGUMENT ---
 MODE=${1:-daily}
-IS_BOOTSTRAP="false"
-MAX_EXECUTORS=20
-EXEC_MEM="8G"
-DRIV_MEM="8G"
+CONFIG="config.yaml"
 
-# --- 1. CAPTURE ARGUMENT ---
-if [ "$MODE" == "bootstrap" ]; then
-    echo "🚨 BOOTSTRAP MODE DETECTED: Scaling up for 200GB load..."
-    IS_BOOTSTRAP="true"
-    MAX_EXECUTORS=100
-    EXEC_MEM="16G"
-    DRIV_MEM="32G" # Increased for 200GB metadata handling
-fi
+# Programmatic extraction using Python
+get_val() { python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG'))$1)"; }
 
-# --- 2. CONFIGURATION ---
-S3_BUCKET="trading-pipeline"
-AWS_REGION="us-east-1"
-DIST_DIR="./dist"
-mkdir -p $DIST_DIR
+# Fetch EMR/Spark params
+MAX_EXECS=$(get_val "['scaling']['$MODE']['max_executors']")
+EXEC_MEM=$(get_val "['scaling']['$MODE']['executor_memory']")
+DRIV_MEM=$(get_val "['scaling']['$MODE']['driver_memory']")
+S3_BUCKET=$(get_val "['prod']['warehouse']" | cut -d'/' -f3)
 
-# --- 3. SOURCE PARAMS (After variables are defined) ---
-## This ensures ${S3_BUCKET} and ${IS_BOOTSTRAP} are expanded correctly
-source infrastructure/.spark_conf
+# App ID from local file
+APP_ID=$(cat .application-id)
+ROLE_ARN="arn:aws:iam::949934295366:role/EMRServerlessRole"
 
-# --- 4. PACKAGING ---
-# Rebuilding the zip to support 'import adapters' (Flat structure)
-echo "📂 Packaging source code (Flat structure for Hatch compatibility)..."
-(cd src && zip -r ../$DIST_DIR/src.zip . -x "*.pyc" "__pycache__/*")
+BOOTSTRAP_ARG=""
+if [ "$MODE" == "bootstrap" ]; then BOOTSTRAP_ARG="--bootstrap"; fi
 
-aws s3 cp $DIST_DIR/src.zip s3://$S3_BUCKET/artifacts/
+# Packaging
+echo "📂 Packaging source code..."
+(cd src && zip -r ../dist/src.zip . -x "*.pyc" "__pycache__/*")
+aws s3 cp dist/src.zip s3://$S3_BUCKET/artifacts/
 aws s3 cp config.yaml s3://$S3_BUCKET/artifacts/
 aws s3 cp src/main.py s3://$S3_BUCKET/artifacts/
 
-# --- 5. EMR SERVERLESS SUBMISSION ---
-APP_ID=$(cat .application-id)
-# 🚨 ENSURE YOU UPDATE YOUR ACCOUNT ID HERE
-EXECUTION_ROLE_ARN="arn:aws:iam::949934295366:role/EMRServerlessRole"
+# Build Submit Params
+SPARK_PARAMS="--conf spark.executor.instances=$MAX_EXECS
+--conf spark.executor.memory=$EXEC_MEM
+--conf spark.driver.memory=$DRIV_MEM
+--conf spark.submit.pyFiles=s3://$S3_BUCKET/artifacts/src.zip"
 
-echo "Submitting $MODE job to Application $APP_ID..."
-
-# Clean the params: remove potential newlines and extra spaces
-CLEAN_PARAMS=$(echo $SUBMIT_PARAMS | tr -d '\n' | tr -s ' ')
-
-# Build the JSON block using a variable to avoid quote nesting issues
 JOB_DRIVER=$(printf '{
     "sparkSubmit": {
         "entryPoint": "s3://%s/artifacts/main.py",
+        "entryPointArguments": ["%s"],
         "sparkSubmitParameters": "%s"
     }
-}' "$S3_BUCKET" "$CLEAN_PARAMS")
+}' "$S3_BUCKET" "$BOOTSTRAP_ARG" "$SPARK_PARAMS")
 
+echo "🚀 Submitting $MODE job to EMR Serverless..."
 JOB_RUN_ID=$(aws emr-serverless start-job-run \
-  --region ${AWS_REGION} \
-  --application-id ${APP_ID} \
-  --execution-role-arn ${EXECUTION_ROLE_ARN} \
+  --application-id $APP_ID \
+  --execution-role-arn $ROLE_ARN \
   --job-driver "$JOB_DRIVER" \
-  --query 'jobRunId' --output text)
+  --query 'jobRunId' \
+  --output text)
 
-echo "✅ Job submitted: $JOB_RUN_ID"
+aws emr-serverless wait job-run-completed --application-id $APP_ID --job-run-id $JOB_RUN_ID

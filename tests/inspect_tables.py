@@ -10,6 +10,14 @@ from config.spark_session import SparkSessionBuilder
 spark = SparkSessionBuilder.create()
 
 # Show schema with data types
+print("\n=== Bronze Table Schema ===")
+spark.table("glue_catalog.trading_db.bronze_options_chain").printSchema()
+
+# Show sample data
+print("\n=== Sample Data (5 rows) ===")
+spark.table("glue_catalog.trading_db.bronze_options_chain").show(5, truncate=False)
+
+# Show schema with data types
 print("\n=== Silver Table Schema ===")
 spark.table("glue_catalog.trading_db.enriched_options_silver").printSchema()
 
