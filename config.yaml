@@ -2,31 +2,53 @@ project:
   name: "Option Trading Pipeline"
   environment: "prod"
 
+data_format:
+  raw: "csv"
+  iceberg: "parquet"
+
 storage:
   catalog_name: "glue_catalog"
   db_name: "trading_db"
-  table_name: "raw_options_chain"
+  tables:
+    bronze: "bronze_options_chain"
+    silver: "enriched_options_silver"
+    gold: "strategy_signals"
 
-  dev:
-    warehouse: "./iceberg-warehouse/"
-    catalog_type: "hadoop"
-    use_location_clause: false
-    # NEW: Explicit format attributes
-    raw_data_format: "csv"
-    iceberg_format: "parquet"
-    raw_data_path: "./data/raw/opra-pillar-20250128.cbbo-1m.csv" # Pointing to the specific file
+# [STRATEGY SWITCHBOARD]
+strategies:
+  - class: "LaymanSPYStrategy"
+    active: "Y"
+    underlying: "SPY"
+  - class: "LaymanQQQStrategy"
+    active: "N"
+    underlying: "QQQ"
 
-  prod:
-    warehouse: "s3://trading-pipeline/iceberg-warehouse/"
-    catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
-    io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
-    use_location_clause: true
-    # NEW: Explicit format attributes
-    raw_data_format: "csv"
-    iceberg_format: "parquet"
-    raw_data_path: "s3://trading-pipeline/data/raw/"
-    write_mode: "merge-on-read"
-    format_version: "2"
+filters:
+  - class: "ZeroDTEPolicy"
+    active: "N"
+  - class: "LiquidityPolicy"
+    active: "N"
+
+dev:
+  warehouse: "./iceberg-warehouse/"
+  catalog_type: "hadoop"
+  use_location_clause: false
+  # NEW: Explicit format attributes
+  path_landing: "./data/raw/landing/"
+  path_processed: "./data/raw/processed/"
+  raw_data_path: "./data/raw/opra-pillar-20250128.cbbo-1m.csv" # Pointing to the specific file
+
+prod:
+  warehouse: "s3://trading-pipeline/iceberg-warehouse/"
+  catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
+  io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
+  use_location_clause: true
+  # NEW: Explicit format attributes
+  path_landing: "s3://trading-pipeline/data/raw/landing/"
+  path_processed: "s3://trading-pipeline/data/raw/processed/"
+  raw_data_path: "s3://trading-pipeline/data/raw/"
+  write_mode: "merge-on-read"
+  format_version: "2"
 
 scaling:
   bootstrap:

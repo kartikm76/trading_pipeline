@@ -1,41 +1,37 @@
-from pyspark.sql import SparkSession, DataFrame, functions as F
-from adapters.base_adapter import BaseAdapter
-from adapters.data_loader import PRODUCTION_SCHEMA
+from abc import ABC
 
-class CSVAdapter(BaseAdapter):
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import functions as F
+from adapters.base_adapter import BaseAdapter
+
+class CSVAdapter(BaseAdapter, ABC):
     def __init__(self, spark: SparkSession, config):
         self.spark = spark
         self.config = config
         # Path built once from config to avoid repeated lookups
-        self.full_table_path = f"{config.catalog}.{config.db_name}.{config.table_name}"
+        self.full_table_path = config.get_table_path('bronze')
+        self.raw_format = config.raw_format
 
+    # Inside your CSV/Parquet Adapter class
     def ingest(self, path: str, is_bootstrap: bool = False) -> DataFrame:
-        """
-        Loads 200GB raw CSVs and writes them to Iceberg Parquet.
-        """
-        # 1. Load using the explicit PRODUCTION_SCHEMA (No inferSchema scan)
-        df = self.spark.read.csv(
-            path,
-            schema=PRODUCTION_SCHEMA,
-            header=True
-        )
+        df = self.spark.read.format(self.raw_format).option("header", "true").option("inferSchema", "true").load(path)
 
-        # 2. Optimized Iceberg Write
-        writer = df.writeTo(self.full_table_path)
+        # Add file_name column from the input path
+        file_name = path.split("/")[-1]  # Extract filename from path
+        df = df.withColumn("file_name", F.lit(file_name))
+
+        target_table = self.config.get_table_path('bronze')
+
+        writer = df.writeTo(target_table)
 
         if is_bootstrap:
-            # Scale-optimized for 200GB initial load
-            writer.tableProperty("format-version", "2") \
-                .tableProperty("write.format.default", self.config.iceberg_format) \
-                .tableProperty("write.update.mode", "merge-on-read") \
-                .partitionedBy(F.days("ts_recv")) \
-                .createOrReplace()
+            # Create the table for the first time
+            writer.tableProperty("format-version", "2").createOrReplace()
         else:
-            # 3-minute target for 5GB daily deltas
+            # Only use append once the table exists
             writer.append()
-        return df
+
+        return self.spark.table(target_table)
 
     def get_options_data(self, ticker: str, start_date: str, end_date: str) -> DataFrame:
-        return self.spark.table(self.full_table_path) \
-            .filter(F.col("symbol") == ticker) \
-            .filter(F.col("ts_recv").between(start_date, end_date))
+        raise NotImplementedError("CSVAdapter does not support get_options_data.")

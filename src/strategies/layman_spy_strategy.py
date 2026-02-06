@@ -6,21 +6,7 @@ class LaymanSPYStrategy(BaseStrategy):
         self.underlying = underlying
 
     def generate_signals(self, df: DataFrame) -> DataFrame:
-        # 1. Parse Option Type from OSI Symbol string [cite: 137]
-        df = df.withColumn(
-            "option_type",
-            F.when(F.col("symbol").contains("C"), "CALL")
-            .when(F.col("symbol").contains("P"), "PUT")
-            .otherwise("UNKNOWN")
-        )
-
-        # 2. Calculate Mid-Price for valuation using raw schema [cite: 137]
-        df = df.withColumn(
-            "mid_price",
-            (F.col("bid_px_00") + F.col("ask_px_00")) / 2
-        )
-
-        # 3. Apply Trading Logic using Column expressions (Fixes IDE errors)
+        # 1. Apply Strategy Logic
         signals_df = df.withColumn(
             "signal",
             F.when(
@@ -30,7 +16,7 @@ class LaymanSPYStrategy(BaseStrategy):
             ).otherwise("HOLD")
         )
 
-        # 4. Filter for specific strategy output
+        # 2. Return the strategy output
         return signals_df.select(
             "ts_recv",
             "symbol",
