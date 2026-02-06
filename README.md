@@ -8,6 +8,7 @@ A production-ready data pipeline for processing options chain data using PySpark
 - [Project Structure](#-project-structure)
 - [Configuration](#-configuration)
 - [Running the Pipeline](#-running-the-pipeline)
+- [Batch Processing (Production)](#-batch-processing-production)
 - [Inspecting Data](#-inspecting-data)
 - [Data Schema](#-data-schema)
 - [Troubleshooting](#-troubleshooting)
@@ -93,13 +94,24 @@ trading_pipeline/
 │   ├── strategies/        # Trading signal generation strategies
 │   ├── utils/             # Utility functions
 │   └── main.py            # Main entry point
+├── infrastructure/        # AWS deployment and automation scripts
+│   ├── 1_setup_iam_role.sh       # Creates IAM roles for EMR Serverless
+│   ├── 2_deploy_and_submit.sh   # Deploys code and submits Spark jobs
+│   ├── 3_watch_job.sh            # Monitors running EMR jobs
+│   ├── 9_terminate_all.sh        # Cleanup script
+│   └── dist/                     # Build artifacts (auto-generated)
 ├── tests/                 # Test scripts
+│   └── inspect_tables.py  # View table schemas and data
 ├── data/
-│   └── raw/              # Place your raw CSV files here
-├── iceberg-warehouse/    # Local Iceberg table storage (auto-created)
-├── config.yaml           # Main configuration file
-├── pyproject.toml        # Project dependencies
-└── README.md             # This file
+│   ├── raw/
+│   │   ├── landing/       # [S3] Incoming CSV files (bulk upload)
+│   │   ├── staging/       # [S3] Files being processed by Spark
+│   │   └── processed/     # [S3] Successfully processed files (archive)
+│   └── iceberg-warehouse/ # [Local/S3] Iceberg table storage
+├── batch_control.sh       # Automated batch processing controller
+├── config.yaml            # Main configuration file
+├── pyproject.toml         # Project dependencies
+└── README.md              # This file
 ```
 
 ---
@@ -189,6 +201,97 @@ For daily updates without recreating tables:
 ```bash
 ENV=dev 
 uv run python src/main.py
+```
+
+---
+
+## 🔄 Batch Processing (Production)
+
+### Overview
+
+The `batch_control.sh` script automates bulk file processing for production environments. It orchestrates the complete workflow:
+
+**Landing → Staging → Processing → Archive**
+
+### How It Works
+
+1. **Landing Zone**: Upload multiple CSV files to `s3://trading-pipeline/data/raw/landing/`
+2. **Batch Processing**: Script processes files in batches of 15
+3. **Staging**: Files are moved to `staging/` during processing
+4. **Archive**: Successfully processed files move to `processed/`
+5. **Incremental Mode**: First batch runs in `bootstrap` mode, subsequent batches run in `daily` (append) mode
+
+### Usage
+
+#### Production (AWS EMR Serverless)
+```bash
+./batch_control.sh prod
+```
+
+#### Local Development
+```bash
+./batch_control.sh dev
+```
+
+### Workflow Phases
+
+| Phase | Mode | Action | Table Operation |
+|-------|------|--------|-----------------|
+| **Batch 1** (First 15 files) | `bootstrap` | Uploads code + processes data | `createOrReplace` (clean start) |
+| **Batch 2** (Next 15 files) | `daily` | Processes data only | `append` (incremental) |
+| **Batch 3+** (Remaining files) | `daily` | Processes data only | `append` (incremental) |
+
+### Sample Output
+
+```
+🏁 Starting Batch Controller [Env: prod]
+🏗️  Deploying Code...
+move: s3://trading-pipeline/data/raw/landing/opra-pillar-20250128.cbbo-1m.csv to s3://trading-pipeline/data/raw/staging/opra-pillar-20250128.cbbo-1m.csv
+move: s3://trading-pipeline/data/raw/landing/opra-pillar-20250129.cbbo-1m.csv to s3://trading-pipeline/data/raw/staging/opra-pillar-20250129.cbbo-1m.csv
+...
+🚀 Submitting bootstrap job to EMR Serverless...
+⏳ Monitoring Job: 00g387u9hiaj0o0b
+✅ Batch Success.
+move: s3://trading-pipeline/data/raw/staging/opra-pillar-20250128.cbbo-1m.csv to s3://trading-pipeline/data/raw/processed/opra-pillar-20250128.cbbo-1m.csv
+move: s3://trading-pipeline/data/raw/staging/opra-pillar-20250129.cbbo-1m.csv to s3://trading-pipeline/data/raw/processed/opra-pillar-20250129.cbbo-1m.csv
+...
+🚀 Submitting daily job to EMR Serverless...
+⏳ Monitoring Job: 00g3883t57dijo0b
+✅ Batch Success.
+```
+
+### Pre-Run Checklist (Production)
+
+Before running batch processing in production, ensure clean state:
+
+```bash
+# 1. Drop existing tables
+aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
+aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
+aws glue delete-table --database-name "trading_db" --name "trading_signals_gold"
+
+# 2. Clean S3 warehouse
+aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
+
+# 3. Verify files are in landing zone
+aws s3 ls s3://trading-pipeline/data/raw/landing/
+
+# 4. Run batch controller
+./batch_control.sh prod
+```
+
+### File Management Commands
+
+```bash
+# Move files back to landing (for reprocessing)
+aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
+
+# Clean staging area
+aws s3 rm s3://trading-pipeline/data/raw/staging/ --recursive
+
+# Check file counts
+aws s3 ls s3://trading-pipeline/data/raw/landing/ | wc -l
+aws s3 ls s3://trading-pipeline/data/raw/processed/ | wc -l
 ```
 
 ---
@@ -367,27 +470,70 @@ If you encounter any issues:
 
 ## 📝 Quick Reference Commands
 
+### Local Development
 ```bash
 # Install dependencies
 uv sync
 
 # Run pipeline (first time)
-uv run python src/main.py --bootstrap
+ENV=dev uv run python src/main.py --bootstrap
 
 # Run pipeline (incremental)
-uv run python src/main.py
+ENV=dev uv run python src/main.py
 
 # Inspect tables
 uv run python tests/inspect_tables.py
 
-# Check Python version
+# Check versions
 python3 --version
-
-# Check Java version
 java -version
-
-# Check uv version
 uv --version
+```
+
+### Production (AWS)
+```bash
+# Batch processing (automated)
+./batch_control.sh prod
+
+# Manual single run
+bash infrastructure/2_deploy_and_submit.sh bootstrap
+bash infrastructure/2_deploy_and_submit.sh daily
+
+# Monitor jobs
+bash infrastructure/3_watch_job.sh <job-id>
+
+# Cleanup
+bash infrastructure/9_terminate_all.sh
+```
+
+### AWS S3 Management
+```bash
+# Check landing zone
+aws s3 ls s3://trading-pipeline/data/raw/landing/
+
+# Move files to landing
+aws s3 cp /local/path/*.csv s3://trading-pipeline/data/raw/landing/
+
+# Clean up staging
+aws s3 rm s3://trading-pipeline/data/raw/staging/ --recursive
+
+# Archive management
+aws s3 ls s3://trading-pipeline/data/raw/processed/
+aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
+```
+
+### AWS Glue Table Management
+```bash
+# Drop tables (for clean restart)
+aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
+aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
+aws glue delete-table --database-name "trading_db" --name "trading_signals_gold"
+
+# List tables
+aws glue get-tables --database-name "trading_db"
+
+# Clean warehouse
+aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 ```
 
 ---

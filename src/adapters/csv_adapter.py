@@ -25,8 +25,8 @@ class CSVAdapter(BaseAdapter, ABC):
         writer = df.writeTo(target_table)
 
         if is_bootstrap:
-            # Create the table for the first time
-            writer.tableProperty("format-version", "2").createOrReplace()
+            # Add .using("iceberg") so Spark knows how to create the new table
+            writer.using("iceberg").tableProperty("format-version", "2").createOrReplace()
         else:
             # Only use append once the table exists
             writer.append()
