@@ -45,15 +45,15 @@ prod:
 scaling:
   batch_size: 15 # Centralized batch size for the control manager
   bootstrap:
-    max_executors: 3
+    max_executors: 4
     executor_memory: "16G"
     driver_memory: "16G"
     shuffle_partitions: 1000
   daily:
-    max_executors: 1
-    executor_memory: "8G"
-    driver_memory: "8G"
-    shuffle_partitions: 200
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 1000
 
 # [UNDERLYING SYMBOL MAPPING]
 # Maps option symbols to their tradeable underlying ETF/stock

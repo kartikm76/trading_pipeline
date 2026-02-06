@@ -303,7 +303,7 @@ Use `batch_control.sh` for bulk file processing:
 > **Performance Metrics:**
 > - **File Size**: ~1.5 GB each
 > - **Records per File**: ~10 million records
-> - **Processing Time**: ~5 minutes per batch (15 files)
+> - **Processing Time**: ~8 minutes per batch (15 files)
 > - **Total Data per Batch**: ~22.5 GB, ~150 million records
 
 **Sample Output:**
