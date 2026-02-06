@@ -3,13 +3,16 @@
 A production-ready data pipeline for processing options chain data using PySpark, Apache Iceberg, and the Medallion Architecture (Bronze → Silver → Gold).
 
 ## 📋 Table of Contents
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Project Structure](#project-structure)
-- [Configuration](#configuration)
-- [Running the Pipeline](#running-the-pipeline)
-- [Inspecting Data](#inspecting-data)
-- [Troubleshooting](#troubleshooting)
+- [Prerequisites](#-prerequisites)
+- [Installation](#-installation)
+- [Project Structure](#-project-structure)
+- [Configuration](#-configuration)
+- [Running the Pipeline](#-running-the-pipeline)
+- [Inspecting Data](#-inspecting-data)
+- [Data Schema](#-data-schema)
+- [Troubleshooting](#-troubleshooting)
+- [Pipeline Stages](#-pipeline-stages)
+- [Customization](#-customization)
 
 ---
 
@@ -211,6 +214,72 @@ Then in the shell:
 ```python
 spark.table("glue_catalog.trading_db.enriched_options_silver").show(5)
 spark.table("glue_catalog.trading_db.trading_signals_gold").groupBy("signal").count().show()
+```
+
+---
+
+## 📊 Data Schema
+
+### Silver Table Schema
+
+The enriched silver table contains the following columns in order:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | string | OSI symbol (e.g., "SPX   250221C01000000") |
+| `underlying` | string | Mapped tradeable underlying (e.g., "SPY") |
+| `trade_date` | date | Date extracted from filename |
+| `expiry_date` | date | Option expiration date from symbol |
+| `option_type` | string | "CALL" or "PUT" |
+| `strike_price` | decimal(10,2) | Strike price (e.g., 1000.00) |
+| `ts_recv` | timestamp | Timestamp received |
+| `ts_event` | timestamp | Event timestamp |
+| `rtype` | integer | Record type |
+| `publisher_id` | integer | Publisher ID |
+| `instrument_id` | integer | Instrument ID |
+| `side` | string | Side (B/A/N) |
+| `price` | double | Trade price (if applicable) |
+| `size` | integer | Size |
+| `flags` | integer | Flags |
+| `bid_px_00` | double | Best bid price |
+| `ask_px_00` | double | Best ask price |
+| `bid_sz_00` | integer | Best bid size |
+| `ask_sz_00` | integer | Best ask size |
+| `bid_pb_00` | integer | Bid publisher |
+| `ask_pb_00` | integer | Ask publisher |
+| `mid_price` | decimal(10,2) | Calculated mid price |
+| `file_name` | string | Source filename |
+
+### Sample Data
+
+```
++---------------------+----------+----------+-----------+-----------+------------+-------------------+
+|symbol               |underlying|trade_date|expiry_date|option_type|strike_price|ts_recv            |
++---------------------+----------+----------+-----------+-----------+------------+-------------------+
+|SPX   250221C01000000|SPY       |2025-01-28|2025-02-21 |CALL       |1000.00     |2025-01-28 09:31:00|
++---------------------+----------+----------+-----------+-----------+------------+-------------------+
+```
+
+### Gold Table Schema
+
+The gold table contains trading signals:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| All silver columns | - | Inherited from silver table |
+| `signal` | string | Trading signal: "BUY_CALL", "SELL_PUT", or "HOLD" |
+
+### Signal Distribution Example
+
+```
++--------+-------+
+|signal  |count  |
++--------+-------+
+|HOLD    |940046 |
+|SELL_PUT|4535586|
+|BUY_CALL|4611298|
++--------+-------+
+Total: 10,086,930 records
 ```
 
 ---
