@@ -21,6 +21,9 @@ strategies:
   - class: "LaymanQQQStrategy"
     active: "N"
     underlying: "QQQ"
+  - class: "IronCondorStrategy"  # Added and set to active
+    active: "N"
+    underlying: "SPY"
 
 filters:
   - class: "ZeroDTEPolicy"
@@ -32,6 +35,12 @@ dev:
   use_location_clause: false
   raw_base_path: "./data/raw" # Local base
   warehouse: "./iceberg-warehouse/"
+
+hybrid:
+  catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
+  io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
+  warehouse: "s3://trading-pipeline/iceberg-warehouse/"
+  raw_base_path: "s3://trading-pipeline/data/raw"
 
 prod:
   catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"

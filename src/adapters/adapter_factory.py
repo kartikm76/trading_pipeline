@@ -1,4 +1,4 @@
-from  adapters.csv_adapter import CSVAdapter
+from adapters.csv_adapter import CSVAdapter
 from adapters.parquet_adapter import ParquetAdapter
 from adapters.polygen_adapter import PolygonAdapter
 

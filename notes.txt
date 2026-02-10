@@ -3,12 +3,17 @@ find . \( -path "./venv" -o -name "dist" -o -name ".git" \) -prune \
 -o -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yaml" -o -name "requirements.txt" \) \
 -exec echo "--- FILE: {} ---" \; -exec cat {} \; > codebase_snapshot.txt
 
+# add a new library
+uv add "polars[fsspec,pyarrow]"
+
 # Local Bootstrap
 uv run python src/main.py --bootstrap
 uv run python tests/inspect_tables.py
 
-# Production Bootstrap
+# Hybrid Test
+ENV=hybrid uv run python tests/test_spark.py
 
+# Production Bootstrap
 # Steps before each run:
 1. # Move everything back to landing
 aws s3 mv s3://trading-pipeline/data/raw/staging/ s3://trading-pipeline/data/raw/landing/ --recursive

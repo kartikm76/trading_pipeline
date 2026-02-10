@@ -37,6 +37,7 @@ class SparkSessionBuilder:
         catalog_name = config.catalog
 
         # Base builder
+        # --- 1. COMMON CONFIG (All Environments) ---
         builder = SparkSession.builder \
             .appName("OptionChain-EMR-Pipeline") \
             .config("spark.sql.codegen.wholeStage", "false") \
@@ -46,14 +47,31 @@ class SparkSessionBuilder:
             .config(f"spark.sql.catalog.{catalog_name}", "org.apache.iceberg.spark.SparkCatalog") \
             .config(f"spark.sql.catalog.{catalog_name}.warehouse", config.warehouse)
 
+        # --- 2. ENVIRONMENT SPECIFIC CONFIG ---
         if config.environment == 'prod':
-            # EMR 7.1.0 Optimized Path
+            # Run on EMR: Use pre-installed AWS Iceberg JARs
             builder = builder.config("spark.jars", "/usr/share/aws/iceberg/lib/iceberg-spark3-runtime.jar")
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.catalog-impl", config.catalog_impl)
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.io-impl", config.io_impl)
-        else:
-            # Local Dev Path - RE-ENABLED AND CORRECTED
-            # We use 1.6.1 to match Spark 3.5/Scala 2.12 perfectly
+
+        elif config.env == 'hybrid':
+            # NEW HYBRID PATH: Local Mac -> AWS Glue/S3
+            # Downloads the AWS SDK so your Mac can speak to Glue
+            builder = builder.config("spark.jars.packages",
+                                     "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1,"
+                                     "software.amazon.awssdk:bundle:2.20.160,"
+                                     "software.amazon.awssdk:url-connection-client:2.20.160")
+
+            # Use Glue and S3 implementations
+            builder = builder.config(f"spark.sql.catalog.{catalog_name}.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
+            builder = builder.config(f"spark.sql.catalog.{catalog_name}.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+
+            # Point to your local AWS credentials (~/.aws/credentials)
+            builder = builder.config("spark.hadoop.fs.s3a.aws.credentials.provider",
+                                     "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+
+        elif config.environment == 'local':
+            # Local PC -> Local Files: Pure sandbox mode using Hadoop catalog
             builder = builder.config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1")
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.type", "hadoop")
 

@@ -1,6 +1,9 @@
 import logging
+
+import strategies
 from config import SparkSessionBuilder, ConfigManager
-from services.orchestrator import PipelineOrchestrator
+from services.data_load_orchestrator import DataLoadOrchestrator
+from services.strategy_orchestrator import StrategyOrchestrator
 import argparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -8,18 +11,24 @@ logger = logging.getLogger(__name__)
 
 def initialize_config():
     # Initialize configuration and Spark session
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--bootstrap", action="store_true")
-    args, _ = parser.parse_known_args()
+    parser = argparse.ArgumentParser(description='Options Trading Engine')
+    parser.add_argument('--mode', choices=['dataload', 'strategy'], required=True)
+    parser.add_argument('--bootstrap', action='store_true')
+    parser.add_argument('--strategies', nargs='*', help='Optional list of strategy names')
 
+    args = parser.parse_args()
     config = ConfigManager.get_instance()
-
     spark = SparkSessionBuilder.create()
-    return config, spark, args.bootstrap
+    return config, spark, args.bootstrap, args.mode, args.strategies
 
-def orchestrate(config, spark, bootstrap_mode):
-    orchestrator = PipelineOrchestrator(config, spark)
-    orchestrator.run(is_bootstrap=bootstrap_mode)
+def orchestrate(config, spark, mode, bootstrap_mode):
+    if mode == 'dataload':
+        orchestrator = DataLoadOrchestrator(config, spark)
+        orchestrator.run(is_bootstrap=bootstrap_mode)
+
+    elif mode == 'strategy':
+        orchestrator = StrategyOrchestrator(config, spark)
+        orchestrator.run(strategy_names=strategies)
 
 def verify_gold_layer(spark) -> None:
     # Check the final Gold signals
@@ -35,8 +44,8 @@ def clean_up(spark) -> None:
     spark.stop()
 
 def main():
-    config, spark, bootstrap = initialize_config()
-    orchestrate(config, spark, bootstrap)
+    config, spark, bootstrap, mode, strategies = initialize_config()
+    orchestrate(config, spark, mode, bootstrap)
     verify_gold_layer(spark)
     clean_up(spark)
 

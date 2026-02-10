@@ -5,28 +5,25 @@ logger = logging.getLogger(__name__)
 
 class StrategyFactory:
     @staticmethod
-    def get_strategy(config):
+    def get_strategy(strategy_name, config):
         """
         Dynamically instantiates the active strategy defined in config.yaml
         """
-        # 1. Get the active strategy metadata from ConfigManager
-        active_strategies = config.active_strategy_info
-        if not active_strategies:
-            raise ValueError("No active strategy found in config.yaml")
+        # 1. Look up the specific strategy metadata
+        strategy_info = next(
+            (s for s in config.strategies if s.get('class') == strategy_name),
+            None
+        )
+        if not strategy_info:
+            raise ValueError(f"No strategy found for class {strategy_name} in config.yaml")
 
-        # Get the first active strategy (assuming only one should be active)
-        strategy_info = active_strategies[0]
-        class_name = strategy_info.get('class')
         underlying = strategy_info.get('underlying')
-        logger.info(f"Instantiating Strategy: {class_name} for Underlying: {underlying}")
 
         try:
-            # 2. Look up the class in the strategies package
-            strategy_class = getattr(strategies, class_name)
-
+            # 2. Dynamic instantiation from the strategies package
+            strategy_class = getattr(strategies, strategy_name)
             # 3. Initialize with the underlying symbol from YAML
-            return strategy_class(underlying=underlying)
-
+            return strategy_class(config=config, underlying=underlying)
         except AttributeError:
             logger.error(f"Strategy class {class_name} not found.")
             raise ImportError(f"Strategy class {class_name} not found.")
