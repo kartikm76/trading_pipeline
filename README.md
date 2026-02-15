@@ -130,13 +130,13 @@ Two environments are available:
 
 Loads CSV files through **Landing → Bronze → Silver**.
 
-| What you want to do | Dev (local) | AWS |
-|---|---|---|
-| *First-time load** (create tables from scratch) | `ENV=dev uv run python src/main.py --mode dataload --bootstrap` | `./0_batch_pipeline.sh` |
-| *Daily incremental load** (append new data) | `ENV=dev uv run python src/main.py --mode dataload` | `./infrastructure/deploy_and_submit.sh daily` |
-| *Regression test** | `./tests/regression_dataload.sh dev` | `./tests/regression_dataload.sh aws` |
-| *Regression test (both envs)** | `./tests/regression_dataload.sh` | |
-| *Regression + rebuild Docker image** | `./tests/regression_dataload.sh --rebuild` | |
+| What you want to do                       | Dev (local) | AWS |
+|-------------------------------------------|---|---|
+| `First-time load** (create tables from scratch)` | `ENV=dev uv run python src/main.py --mode dataload --bootstrap` | `./0_batch_pipeline.sh` |
+| `Daily incremental load (append new data)` | `ENV=dev uv run python src/main.py --mode dataload` | `./infrastructure/deploy_and_submit.sh daily` |
+| `Regression test`                         | `./tests/regression_dataload.sh dev` | `./tests/regression_dataload.sh aws` |
+| `Regression test (both envs)`             | `./tests/regression_dataload.sh` | |
+| `Regression + rebuild Docker image`        | `./tests/regression_dataload.sh --rebuild` | |
 
 > **Dev note**: In dev mode, CSVs are read from `data/raw/staging/`. The batch script (`0_batch_pipeline.sh`) is AWS-only — it orchestrates S3 file movement between landing/staging/processed zones.
 
@@ -146,11 +146,11 @@ Reads Silver tables and generates trading signals into **Gold**.
 
 | What you want to do | Dev (local) | AWS |
 |---|---|---|
-| *Run all active strategies** | `ENV=dev uv run python src/main.py --mode strategy` | `./1_strategy_run.sh` |
-| *Run a specific strategy** | `ENV=dev uv run python src/main.py --mode strategy --strategies LaymanSPYStrategy` | `./1_strategy_run.sh --strategies LaymanSPYStrategy` |
-| *Regression test** | `./tests/regression_strategy.sh dev` | `./tests/regression_strategy.sh aws` |
-| *Regression test (both envs)** | `./tests/regression_strategy.sh` | |
-| *Regression + rebuild Docker image** | `./tests/regression_strategy.sh --rebuild` | |
+| `Run all active strategies` | `ENV=dev uv run python src/main.py --mode strategy` | `./1_strategy_run.sh` |
+| `Run a specific strategy` | `ENV=dev uv run python src/main.py --mode strategy --strategies LaymanSPYStrategy` | `./1_strategy_run.sh --strategies LaymanSPYStrategy` |
+| `Regression test` | `./tests/regression_strategy.sh dev` | `./tests/regression_strategy.sh aws` |
+| `Regression test (both envs)` | `./tests/regression_strategy.sh` | |
+| `Regression + rebuild Docker image` | `./tests/regression_strategy.sh --rebuild` | |
 
 > **`--strategies` flag**: Bypasses the `active: "Y"` check in `config.yaml`, letting you run any strategy without editing config. Without the flag, only strategies marked `active: "Y"` will run.
 
