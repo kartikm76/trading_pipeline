@@ -26,29 +26,41 @@ def orchestrate(config, spark, mode, bootstrap_mode, strategy_names=None):
         logger.info(f"🚀 Launching Data Load (Bootstrap: {bootstrap_mode})")
         orchestrator = DataLoadOrchestrator(config, spark)
         orchestrator.run(is_bootstrap=bootstrap_mode)
+        return None
 
     elif mode == 'strategy':
         logger.info("🎯 Launching Strategy SIT")
         orchestrator = StrategyOrchestrator(config, spark)
-        orchestrator.run(strategy_names=strategy_names)
+        return orchestrator.run(strategy_names=strategy_names)
 
-def verify_gold_layer(spark) -> None:
-    # Check the final Gold signals
-    signals = spark.table("glue_catalog.trading_db.strategy_signals")
-    logger.info("--- Sample Trading Signals ---")
-    signals.select("symbol", "mid_price", "signal").filter("signal != 'HOLD'").show(10)
+def verify_gold_layer(spark, config, strategy_names=None) -> None:
+    """Verify gold tables for each strategy that ran."""
+    active_info = config.active_strategy_info
+    targets = strategy_names or [s['class'] for s in active_info]
 
-    # Verify the distribution of signals
-    logger.info("--- Signal Distribution ---")
-    signals.groupBy("signal").count().show()
+    for name in targets:
+        gold_table = f"glue_catalog.{config.db_name}.gold_{name.lower()}"
+        try:
+            signals = spark.table(gold_table)
+            row_count = signals.count()
+            logger.info(f"--- Gold Table: {gold_table} ({row_count:,} rows) ---")
+            signals.show(10, truncate=False)
+        except Exception as e:
+            logger.warning(f"Could not read gold table {gold_table}: {e}")
 
 def clean_up(spark) -> None:
     spark.stop()
 
 def main():
     config, spark, bootstrap, mode, strategy_names = initialize_config()
-    orchestrate(config, spark, mode, bootstrap, strategy_names)
-    verify_gold_layer(spark)
+    results = orchestrate(config, spark, mode, bootstrap, strategy_names)
+
+    if mode == 'strategy' and results:
+        # Only verify gold tables for strategies that succeeded
+        succeeded = [name for name, ok in results.items() if ok]
+        if succeeded:
+            verify_gold_layer(spark, config, succeeded)
+
     clean_up(spark)
 
 if __name__ == "__main__":

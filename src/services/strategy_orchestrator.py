@@ -1,6 +1,9 @@
+import logging
 import concurrent.futures
 import polars as pl
 from strategies.strategy_factory import StrategyFactory
+
+logger = logging.getLogger(__name__)
 
 class StrategyOrchestrator:
     def __init__(self, config, spark):
@@ -20,21 +23,26 @@ class StrategyOrchestrator:
             targets = [t for t in targets if t in strategy_names]
 
         if not targets:
-            print("No active strategies found.")
+            logger.warning("No active strategies found.")
             return
 
+        results = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(targets)) as executor:
             futures_dict = {
                 executor.submit(self.execute_strategy, name, silver_table): name
                     for name in targets
             }
-        for future in concurrent.futures.as_completed(futures_dict):
-            name = futures_dict[future]
-            try:
-                future.result()
-                print (f" {name} completed.")
-            except Exception as e:
-                print (f" {name} failed.")
+            for future in concurrent.futures.as_completed(futures_dict):
+                name = futures_dict[future]
+                try:
+                    future.result()
+                    logger.info(f"✅ {name} completed successfully.")
+                    results[name] = True
+                except Exception as e:
+                    logger.error(f"❌ {name} failed: {e}", exc_info=True)
+                    results[name] = False
+
+        return results
 
     def execute_strategy(self, name, silver_table):
         # 1. Instantiate via updated Factory

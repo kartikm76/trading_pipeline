@@ -11,7 +11,7 @@ class StrategyFactory:
         """
         # 1. Look up the specific strategy metadata
         strategy_info = next(
-            (s for s in config.strategies if s.get('class') == strategy_name),
+            (s for s in config.active_strategy_info if s.get('class') == strategy_name),
             None
         )
         if not strategy_info:
@@ -25,5 +25,5 @@ class StrategyFactory:
             # 3. Initialize with the underlying symbol from YAML
             return strategy_class(config=config, underlying=underlying)
         except AttributeError:
-            logger.error(f"Strategy class {class_name} not found.")
-            raise ImportError(f"Strategy class {class_name} not found.")
+            logger.error(f"Strategy class {strategy_name} not found.")
+            raise ImportError(f"Strategy class {strategy_name} not found.")

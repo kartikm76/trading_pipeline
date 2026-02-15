@@ -1,7 +1,23 @@
 #!/bin/bash
 # infrastructure/2_deploy_and_submit.sh - The Logic Translator
 
-source "$(dirname "$0")/env_discovery.sh"
+SCRIPT_DIR="$(dirname "$0")"
+PROJECT_ROOT="$(realpath "$SCRIPT_DIR/..")"
+
+source "$SCRIPT_DIR/env_discovery.sh"
+
+# ── Step 1: Package & Upload Source Code to S3 ──
+echo "📦 Packaging source code..."
+DIST_DIR="$SCRIPT_DIR/dist"
+mkdir -p "$DIST_DIR"
+(cd "$PROJECT_ROOT/src" && zip -qr "$DIST_DIR/src.zip" . \
+  -x '__pycache__/*' '*/__pycache__/*' '.DS_Store' 'codebase_snapshot.txt')
+
+echo "☁️  Uploading artifacts to S3..."
+aws s3 cp "$DIST_DIR/src.zip" s3://trading-pipeline/artifacts/src.zip --quiet
+aws s3 cp "$PROJECT_ROOT/src/main.py" s3://trading-pipeline/artifacts/main.py --quiet
+aws s3 cp "$PROJECT_ROOT/config.yaml" s3://trading-pipeline/artifacts/config.yaml --quiet
+echo "✅ Artifacts uploaded"
 
 # Accepts: bootstrap, daily, or strategy
 RUN_TYPE=${1:-strategy}

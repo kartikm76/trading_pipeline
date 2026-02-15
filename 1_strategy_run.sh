@@ -1,8 +1,14 @@
 #!/bin/bash
-# 1_strategy_run.sh - Strategy 2: SIT On-Demand Testing
+# 1_strategy_run.sh - Strategy SIT On-Demand Testing (Approach 1: S3-based)
+#
+# Approach 1 workflow:
+#   - Source code is zipped & uploaded to S3 (fast, ~seconds)
+#   - Docker image is ONLY for pip dependencies (rebuild only when deps change)
+#   - deploy_and_submit.sh handles: zip → S3 upload → EMR job submit
+#
+# Usage:
+#   ./1_strategy_run.sh                    # Run all active strategies
+#   ./1_strategy_run.sh --strategies IronCondorStrategy IronButterflyStrategy
 
-# 1. Build image with latest strategy edits
-./infrastructure/build_image.sh
-
-# 2. Run in strategy mode
-./infrastructure/deploy_and_submit.sh "strategy"
+# Pass all arguments through (e.g., --strategies)
+./infrastructure/deploy_and_submit.sh "strategy" "$@"

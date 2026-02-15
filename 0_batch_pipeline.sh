@@ -1,10 +1,11 @@
 #!/bin/bash
-# 0_batch_pipeline.sh - Master Production Orchestrator
+# 0_batch_pipeline.sh - Master Production Orchestrator (Approach 1: S3-based)
+#
+# Docker image is NOT rebuilt here — it only contains pip dependencies.
+# Source code is zipped & uploaded to S3 on every job submission automatically.
+# Only run ./infrastructure/build_image.sh when you add new pip dependencies.
 
-# 1. Update Infrastructure (Ensures AWS Image == Local Code)
-./infrastructure/build_image.sh
-
-# 2. Setup Loop
+# 1. Setup Loop
 MODE="bootstrap"
 while true; do
     echo "📋 Checking for data batch in landing zone..."
