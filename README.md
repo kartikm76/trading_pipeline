@@ -121,54 +121,66 @@ uv sync
 
 ## Running the Pipeline
 
-Every pipeline action follows the same pattern: **a shell script that takes an environment argument**.
+Two environments are available:
 
-- **`dev`** — runs locally with PySpark + Hadoop-backed Iceberg (fast, no AWS needed)
-- **`aws`** — packages code → uploads to S3 → submits EMR Serverless job
+- **`dev`** — runs locally with PySpark (fast, no AWS needed)
+- **`aws`** — submits a job to AWS EMR Serverless
 
-| Type | Env | Command | Purpose | How It Works |
-|------|-----|---------|---------|--------------|
-| | | **── Dataload ──** | | |
-| **Dataload (bootstrap)** | dev | `ENV=dev uv run python src/main.py --mode dataload --bootstrap` | Create local Bronze + Silver tables from scratch | Reads CSVs from `data/raw/staging/` → creates Hadoop-backed Iceberg tables → writes Bronze (raw) + Silver (enriched). Use `--bootstrap` only on first run |
-| **Dataload (bootstrap)** | aws | `./0_batch_pipeline.sh` | Load all CSVs from S3 landing zone into Bronze + Silver on AWS | Picks up to 15 CSVs from `s3://.../landing/` → moves to `staging/` → first batch uses `bootstrap`, subsequent use `daily` → submits EMR job → archives to `processed/` → repeats until empty |
-| **Dataload (incremental)** | dev | `ENV=dev uv run python src/main.py --mode dataload` | Append new data to existing local tables | Same as bootstrap but appends instead of recreating tables |
-| **Dataload (incremental)** | aws | `./infrastructure/deploy_and_submit.sh daily` | Append new data to existing AWS tables (files must already be in `staging/`) | Packages code → uploads to S3 → submits EMR job with `--mode dataload` (no `--bootstrap`). Unlike `0_batch_pipeline.sh`, does not move files between S3 zones |
-| **Regression: Dataload** | dev | `./tests/regression_dataload.sh dev` | Local-only dataload validation | Checks for CSVs in `data/raw/staging/` or `landing/`, skips if empty, otherwise runs bootstrap dataload |
-| **Regression: Dataload** | aws | `./tests/regression_dataload.sh aws` | AWS-only dataload validation | Checks S3 landing zone for files, submits `daily` mode EMR job, polls until done |
-| **Regression: Dataload** | dev + aws | `./tests/regression_dataload.sh` | Full dataload regression across both envs | Runs dev test (120s timeout) then aws test (10min timeout). Skips gracefully if no CSV data available |
-| **Regression: Dataload** | dev + aws | `./tests/regression_dataload.sh --rebuild` | Rebuild Docker image, then run both dataload tests | Runs `build_image.sh` first, then dev + aws tests as above |
-| | | **── Strategy ──** | | |
-| **Strategy (all active)** | dev | `ENV=dev uv run python src/main.py --mode strategy` | Run all `active: "Y"` strategies locally | Loads Iceberg JARs via Maven (cached) → reads local Silver → applies lookback from `max(trade_date)` → Spark → Polars → Spark signal generation → writes `gold_<name>` table |
-| **Strategy (all active)** | aws | `./1_strategy_run.sh` | Run all `active: "Y"` strategies on AWS | Packages `src/` → uploads to S3 → submits EMR job with `--mode strategy` → orchestrator runs each active strategy in parallel → writes Gold tables |
-| **Strategy (specific)** | dev | `ENV=dev uv run python src/main.py --mode strategy --strategies LaymanSPYStrategy` | Run only the named strategy locally — **overrides `active` flag** | Runs the listed strategy regardless of its `active` setting in `config.yaml`. Pass multiple names space-separated |
-| **Strategy (specific)** | aws | `./1_strategy_run.sh --strategies LaymanSPYStrategy` | Run only the named strategy on AWS — **overrides `active` flag** | Same override behavior. e.g. `./1_strategy_run.sh --strategies LaymanSPYStrategy IronCondorStrategy` |
-| **Regression: Strategy** | dev | `./tests/regression_strategy.sh dev` | Quick local-only strategy validation (~30s) | Runs strategy pipeline locally with Python 3.12 + local Iceberg, reports PASS/FAIL |
-| **Regression: Strategy** | aws | `./tests/regression_strategy.sh aws` | AWS-only strategy validation (~3-5 min) | Packages code → uploads to S3 → submits EMR job → polls every 15s until SUCCESS/FAIL |
-| **Regression: Strategy** | dev + aws | `./tests/regression_strategy.sh` | Full strategy regression across both envs | Runs dev test (120s timeout) then aws test (10min timeout), reports PASS/FAIL per env |
-| **Regression: Strategy** | dev + aws | `./tests/regression_strategy.sh --rebuild` | Rebuild Docker image, then run both tests. Use after `pyproject.toml` changes | Runs `build_image.sh` first, then dev + aws tests as above |
+### 1. Data Loading
 
-> **Note on dev dataload**: In dev mode you run `main.py` directly (not `0_batch_pipeline.sh`), because the batch script orchestrates S3 file movement which only applies to AWS. Locally, you just point at CSVs in `data/raw/staging/`.
->
-> **Note on `--strategies` flag**: When you pass `--strategies`, it **bypasses the `active: "Y"` check** in `config.yaml`. This lets you test inactive strategies without editing the config. Without the flag, only strategies marked `active: "Y"` will run.
+Loads CSV files through **Landing → Bronze → Silver**.
+
+| What you want to do | Dev (local) | AWS |
+|---|---|---|
+| **First-time load** (create tables from scratch) | `ENV=dev uv run python src/main.py --mode dataload --bootstrap` | `./0_batch_pipeline.sh` |
+| **Daily incremental load** (append new data) | `ENV=dev uv run python src/main.py --mode dataload` | `./infrastructure/deploy_and_submit.sh daily` |
+| **Regression test** | `./tests/regression_dataload.sh dev` | `./tests/regression_dataload.sh aws` |
+| **Regression test (both envs)** | `./tests/regression_dataload.sh` | |
+| **Regression + rebuild Docker image** | `./tests/regression_dataload.sh --rebuild` | |
+
+> **Dev note**: In dev mode, CSVs are read from `data/raw/staging/`. The batch script (`0_batch_pipeline.sh`) is AWS-only — it orchestrates S3 file movement between landing/staging/processed zones.
+
+### 2. Strategy
+
+Reads Silver tables and generates trading signals into **Gold**.
+
+| What you want to do | Dev (local) | AWS |
+|---|---|---|
+| **Run all active strategies** | `ENV=dev uv run python src/main.py --mode strategy` | `./1_strategy_run.sh` |
+| **Run a specific strategy** | `ENV=dev uv run python src/main.py --mode strategy --strategies LaymanSPYStrategy` | `./1_strategy_run.sh --strategies LaymanSPYStrategy` |
+| **Regression test** | `./tests/regression_strategy.sh dev` | `./tests/regression_strategy.sh aws` |
+| **Regression test (both envs)** | `./tests/regression_strategy.sh` | |
+| **Regression + rebuild Docker image** | `./tests/regression_strategy.sh --rebuild` | |
+
+> **`--strategies` flag**: Bypasses the `active: "Y"` check in `config.yaml`, letting you run any strategy without editing config. Without the flag, only strategies marked `active: "Y"` will run.
 
 ### Common Workflows
 
+#### Data Loading
+
 ```bash
-# Day-to-day: code change → quick local check → deploy
-./tests/regression_strategy.sh dev        # ~30s sanity check
+# First-time load (AWS) — loads all CSVs from S3 landing zone
+./0_batch_pipeline.sh
+
+# First-time load (local) — create local tables from CSVs in data/raw/staging/
+ENV=dev uv run python src/main.py --mode dataload --bootstrap
+
+# Dependency change — rebuild Docker image + run full dataload regression
+./tests/regression_dataload.sh --rebuild
+```
+
+#### Strategy
+
+```bash
+# Day-to-day: code change → quick local check → deploy to AWS
+./tests/regression_strategy.sh dev        # ~30s local sanity check
 ./1_strategy_run.sh                       # deploy to AWS
 
-# Dependency change: rebuild everything → full regression
-./tests/regression_strategy.sh --rebuild  # rebuild image + test both envs
-./tests/regression_dataload.sh --rebuild
+# Run strategies locally
+ENV=dev uv run python src/main.py --mode strategy
 
-# First-time data load on a fresh setup
-./0_batch_pipeline.sh                     # loads all CSVs from S3 landing zone
-./1_strategy_run.sh                       # run strategies on the loaded data
-
-# First-time local dev setup
-ENV=dev uv run python src/main.py --mode dataload --bootstrap   # create local tables
-ENV=dev uv run python src/main.py --mode strategy               # run strategies locally
+# Dependency change — rebuild Docker image + run full strategy regression
+./tests/regression_strategy.sh --rebuild
 ```
 
 ---
