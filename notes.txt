@@ -1,50 +1,30 @@
-Next Steps for Implementation
-find . \( -path "./venv" -o -name "dist" -o -name ".git" \) -prune \
--o -type f \( -name "*.py" -o -name "*.sh" -o -name "*.yaml" -o -name "requirements.txt" \) \
--exec echo "--- FILE: {} ---" \; -exec cat {} \; > codebase_snapshot.txt
+## Capture Codebase Snapshot
+1. Capture specific root files
+for f in 0_batch_pipeline.sh 1_strategy_run.sh config.yaml Dockerfile README.md requirements.txt; do
+    [ -f "$f" ] && echo "--- FILE: ./$f ---" && cat "$f"
+done > codebase_snapshot.txt
 
-# add a new library
-uv add "polars[fsspec,pyarrow]"
+2. Append all .py and .sh files from infrastructure and src
+find ./infrastructure ./src -type f \( -name "*.py" -o -name "*.sh" \) \
+-exec echo "--- FILE: {} ---" \; -exec cat {} \; >> codebase_snapshot.txt
 
-# Local Bootstrap
-uv run python src/main.py --bootstrap
-uv run python tests/inspect_tables.py
-
-# Hybrid Test
-ENV=hybrid uv run python tests/test_spark.py
-
-# Production Bootstrap
-# Steps before each run:
-1. # Move everything back to landing
-aws s3 mv s3://trading-pipeline/data/raw/staging/ s3://trading-pipeline/data/raw/landing/ --recursive
-aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
-
-2. Drop Tables:
-aws glue delete-table --database-name "trading_db" --name "strategy_signals"
-aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
-aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
-
-3. Clear the warehouse physical files
-aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
-
-4. Run:
-./batch_control.sh prod
-
-
-5. Strategy Run -- To Be Continued
-(trading-pipeline) /Users/kartikmakker/Kartik_Workspace/trading_pipeline/infrastructure $ ./strategy_run.sh
-🏠 Project Root identified as: /Users/kartikmakker/Kartik_Workspace/trading_pipeline
-📦 Packaging project...
-⬆️ Syncing artifacts to s3://trading-pipeline/artifacts/ ...
-upload: ../dist/src.zip to s3://trading-pipeline/artifacts/src.zip
-upload: ../config.yaml to s3://trading-pipeline/artifacts/config.yaml
-upload: ../src/main.py to s3://trading-pipeline/artifacts/main.py
-🚀 Triggering EMR Strategy Orchestration for App: 00g35nv23d1lkf09
-{
-    "applicationId": "00g35nv23d1lkf09",
-    "jobRunId": "00g3ap5hcjhoc00b",
-    "arn": "arn:aws:emr-serverless:us-east-1:949934295366:/applications/00g35nv23d1lkf09/jobruns/00g3ap5hcjhoc00b"
-}
-
+## Start Colima with Rosetta
 colima start --arch aarch64 --vm-type=vz --vz-rosetta
 docker buildx build   --platform linux/amd64,linux/arm64   -t 949934295366.dkr.ecr.us-east-1.amazonaws.com/trading-pipeline:latest   --push .
+
+## Potential Next Steps:
+1. Fix the --strategies bug + IronCondorStrategy issues
+There are two code bugs worth addressing:
+a) StrategyFactory.get_strategy() only searches active_strategy_info (line 14 of strategy_factory.py), which filters for active: "Y". So even though strategy_orchestrator.py bypasses the active check when --strategies is passed, the factory will throw "No strategy found for class IronCondorStrategy" because it's active: "N". The override is broken.
+b) IronCondorStrategy has bugs:
+__init__ takes config but not underlying, yet references self.underlying (line 8) — will crash with NameError
+required_columns references expiration and strike but Silver table uses expiry_date and strike_price
+Missing logic() abstract method implementation
+Missing cast_decimals() call in _process_partition
+
+2. deploy_and_submit performance optimization
+The current implementation of deploy_and_submit.sh can be optimized for better performance.
+Consider parallelizing the upload and submission steps to reduce overall execution time.
+
+3. Run AWS regression of dataload and strategy
+4. Add a new strategy and test it locally and AWS
