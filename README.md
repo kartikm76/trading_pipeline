@@ -121,62 +121,54 @@ uv sync
 
 ## Running the Pipeline
 
-There are two top-level entry points. Each one packages your latest code, uploads it to S3, and submits an EMR Serverless job — all in one command.
+Every pipeline action follows the same pattern: **a shell script that takes an environment argument**.
 
-### `0_batch_pipeline.sh` — Load Data (Bronze + Silver)
+- **`dev`** — runs locally with PySpark + Hadoop-backed Iceberg (fast, no AWS needed)
+- **`aws`** — packages code → uploads to S3 → submits EMR Serverless job
 
-Processes CSV files from the S3 landing zone into Bronze and Silver Iceberg tables.
+| Type | Env | Command | Purpose | How It Works |
+|------|-----|---------|---------|--------------|
+| | | **── Dataload ──** | | |
+| **Dataload (bootstrap)** | dev | `ENV=dev uv run python src/main.py --mode dataload --bootstrap` | Create local Bronze + Silver tables from scratch | Reads CSVs from `data/raw/staging/` → creates Hadoop-backed Iceberg tables → writes Bronze (raw) + Silver (enriched). Use `--bootstrap` only on first run |
+| **Dataload (bootstrap)** | aws | `./0_batch_pipeline.sh` | Load all CSVs from S3 landing zone into Bronze + Silver on AWS | Picks up to 15 CSVs from `s3://.../landing/` → moves to `staging/` → first batch uses `bootstrap`, subsequent use `daily` → submits EMR job → archives to `processed/` → repeats until empty |
+| **Dataload (incremental)** | dev | `ENV=dev uv run python src/main.py --mode dataload` | Append new data to existing local tables | Same as bootstrap but appends instead of recreating tables |
+| **Dataload (incremental)** | aws | `./infrastructure/deploy_and_submit.sh daily` | Append new data to existing AWS tables (files must already be in `staging/`) | Packages code → uploads to S3 → submits EMR job with `--mode dataload` (no `--bootstrap`). Unlike `0_batch_pipeline.sh`, does not move files between S3 zones |
+| **Regression: Dataload** | dev | `./tests/regression_dataload.sh dev` | Local-only dataload validation | Checks for CSVs in `data/raw/staging/` or `landing/`, skips if empty, otherwise runs bootstrap dataload |
+| **Regression: Dataload** | aws | `./tests/regression_dataload.sh aws` | AWS-only dataload validation | Checks S3 landing zone for files, submits `daily` mode EMR job, polls until done |
+| **Regression: Dataload** | dev + aws | `./tests/regression_dataload.sh` | Full dataload regression across both envs | Runs dev test (120s timeout) then aws test (10min timeout). Skips gracefully if no CSV data available |
+| **Regression: Dataload** | dev + aws | `./tests/regression_dataload.sh --rebuild` | Rebuild Docker image, then run both dataload tests | Runs `build_image.sh` first, then dev + aws tests as above |
+| | | **── Strategy ──** | | |
+| **Strategy (all active)** | dev | `ENV=dev uv run python src/main.py --mode strategy` | Run all `active: "Y"` strategies locally | Loads Iceberg JARs via Maven (cached) → reads local Silver → applies lookback from `max(trade_date)` → Spark → Polars → Spark signal generation → writes `gold_<name>` table |
+| **Strategy (all active)** | aws | `./1_strategy_run.sh` | Run all `active: "Y"` strategies on AWS | Packages `src/` → uploads to S3 → submits EMR job with `--mode strategy` → orchestrator runs each active strategy in parallel → writes Gold tables |
+| **Strategy (specific)** | dev | `ENV=dev uv run python src/main.py --mode strategy --strategies LaymanSPYStrategy` | Run only the named strategy locally — **overrides `active` flag** | Runs the listed strategy regardless of its `active` setting in `config.yaml`. Pass multiple names space-separated |
+| **Strategy (specific)** | aws | `./1_strategy_run.sh --strategies LaymanSPYStrategy` | Run only the named strategy on AWS — **overrides `active` flag** | Same override behavior. e.g. `./1_strategy_run.sh --strategies LaymanSPYStrategy IronCondorStrategy` |
+| **Regression: Strategy** | dev | `./tests/regression_strategy.sh dev` | Quick local-only strategy validation (~30s) | Runs strategy pipeline locally with Python 3.12 + local Iceberg, reports PASS/FAIL |
+| **Regression: Strategy** | aws | `./tests/regression_strategy.sh aws` | AWS-only strategy validation (~3-5 min) | Packages code → uploads to S3 → submits EMR job → polls every 15s until SUCCESS/FAIL |
+| **Regression: Strategy** | dev + aws | `./tests/regression_strategy.sh` | Full strategy regression across both envs | Runs dev test (120s timeout) then aws test (10min timeout), reports PASS/FAIL per env |
+| **Regression: Strategy** | dev + aws | `./tests/regression_strategy.sh --rebuild` | Rebuild Docker image, then run both tests. Use after `pyproject.toml` changes | Runs `build_image.sh` first, then dev + aws tests as above |
 
-```bash
-./0_batch_pipeline.sh
-```
+> **Note on dev dataload**: In dev mode you run `main.py` directly (not `0_batch_pipeline.sh`), because the batch script orchestrates S3 file movement which only applies to AWS. Locally, you just point at CSVs in `data/raw/staging/`.
+>
+> **Note on `--strategies` flag**: When you pass `--strategies`, it **bypasses the `active: "Y"` check** in `config.yaml`. This lets you test inactive strategies without editing the config. Without the flag, only strategies marked `active: "Y"` will run.
 
-**How it works:**
-1. Picks up to 15 CSV files from `s3://trading-pipeline/data/raw/landing/`
-2. Moves them to `staging/`
-3. Submits an EMR job (`bootstrap` for the first batch, `daily` for subsequent)
-4. Archives processed files to `processed/`
-5. Repeats until the landing zone is empty
-
-| Batch | Mode | Table Operation | When |
-|-------|------|-----------------|------|
-| First batch | `bootstrap` | `createOrReplace` — creates tables from scratch | First 15 files |
-| Subsequent batches | `daily` | `append` — incremental insert | Remaining files |
-
-### `1_strategy_run.sh` — Execute Strategies (Gold)
-
-Runs active trading strategies against the Silver table and writes Gold tables.
-
-```bash
-# Run all active strategies (from config.yaml)
-./1_strategy_run.sh
-
-# Run specific strategies only
-./1_strategy_run.sh --strategies IronCondorStrategy LaymanSPYStrategy
-```
-
-| Mode | Command | What it does |
-|------|---------|--------------|
-| All active | `./1_strategy_run.sh` | Runs every strategy with `active: "Y"` in config.yaml |
-| Specific | `./1_strategy_run.sh --strategies <Name1> <Name2>` | Runs only the named strategies |
-
-### Local Development (no AWS)
-
-For local testing with small datasets:
+### Common Workflows
 
 ```bash
-# Place CSV files in ./data/raw/
-mkdir -p data/raw
-cp /path/to/sample.csv data/raw/
+# Day-to-day: code change → quick local check → deploy
+./tests/regression_strategy.sh dev        # ~30s sanity check
+./1_strategy_run.sh                       # deploy to AWS
 
-# Bootstrap (first time — creates local Iceberg tables)
-ENV=dev uv run python src/main.py --mode dataload --bootstrap
+# Dependency change: rebuild everything → full regression
+./tests/regression_strategy.sh --rebuild  # rebuild image + test both envs
+./tests/regression_dataload.sh --rebuild
 
-# Daily (incremental append)
-ENV=dev uv run python src/main.py --mode dataload
+# First-time data load on a fresh setup
+./0_batch_pipeline.sh                     # loads all CSVs from S3 landing zone
+./1_strategy_run.sh                       # run strategies on the loaded data
 
-# Run strategies locally
-ENV=dev uv run python src/main.py --mode strategy
+# First-time local dev setup
+ENV=dev uv run python src/main.py --mode dataload --bootstrap   # create local tables
+ENV=dev uv run python src/main.py --mode strategy               # run strategies locally
 ```
 
 ---
@@ -219,6 +211,9 @@ trading_pipeline/
 │   └── terminate_all.sh             # Teardown all AWS resources
 │
 └── tests/
+    ├── regression_strategy.sh       # Strategy regression (dev + aws)
+    ├── regression_dataload.sh        # Dataload regression (dev + aws)
+    ├── inspect_tables.py
     └── test_spark.py
 ```
 
@@ -428,5 +423,7 @@ aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 | `ServiceQuotaExceededException: vCPU` | Reduce `max_executors` in config.yaml or request AWS quota increase |
 | `AccessDeniedException: glue:CreateTable` | Re-run `./infrastructure/setup_iam_role.sh` to update IAM permissions |
 | `can't open file '/app/src/main.py'` | Entry point must be S3-based (`s3://`), not container path. Check `deploy_and_submit.sh` |
+| `No module named 'distutils'` | Pin project to Python 3.12: `uv python pin 3.12 && uv sync --reinstall` |
+| `RecursionError: Stack overflow in comparison` | PySpark incompatible with Python 3.14. Use Python 3.12 (see above) |
 | Docker build fails | Ensure Docker/Colima is running: `docker info`. For Colima: `colima start` |
 | Version conflicts | `uv sync --reinstall` |

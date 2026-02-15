@@ -16,6 +16,24 @@ This automatically packages source code, uploads to S3, and submits the EMR job.
 # 1. Update pyproject.toml with new dependency
 # 2. Rebuild, push, and update EMR app (all-in-one)
 ./infrastructure/build_image.sh
+# 3. Run regression to verify everything works
+./tests/regression_strategy.sh
+./tests/regression_dataload.sh
+```
+
+## Regression Suite
+```bash
+# Strategy regression (silver → gold)
+./tests/regression_strategy.sh              # Run both dev + aws
+./tests/regression_strategy.sh dev          # Local dev only
+./tests/regression_strategy.sh aws          # AWS EMR only
+./tests/regression_strategy.sh --rebuild    # Rebuild Docker image first, then both
+
+# Dataload regression (landing → bronze → silver)
+./tests/regression_dataload.sh              # Run both dev + aws
+./tests/regression_dataload.sh dev          # Local dev only
+./tests/regression_dataload.sh aws          # AWS EMR only
+./tests/regression_dataload.sh --rebuild    # Rebuild Docker image first, then both
 ```
 
 ## Monitoring
@@ -71,6 +89,8 @@ Job time grew from 10 min → 30 min due to Iceberg metadata accumulation per ba
 **Top-level entry points:**
 - `0_batch_pipeline.sh` - Data loading orchestrator (landing → bronze → silver)
 - `1_strategy_run.sh` - Strategy execution entry point
+- `tests/regression_strategy.sh` - Strategy regression (dev + aws)
+- `tests/regression_dataload.sh` - Dataload regression (dev + aws)
 
 **Infrastructure helpers (each does ONE thing):**
 - `infrastructure/build_image.sh` - Build + push Docker image + update EMR app (full image lifecycle)

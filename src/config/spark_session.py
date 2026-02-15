@@ -69,8 +69,8 @@ class SparkSessionBuilder:
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.catalog-impl", config.catalog_impl)
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.io-impl", config.io_impl)
 
-        elif config.environment == 'local':
-            # Local PC -> Local Files: Pure sandbox mode using Hadoop catalog
+        elif config.environment == 'dev':
+            # Local dev: Pure sandbox mode using Hadoop catalog + local files
             builder = builder.config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1")
             builder = builder.config(f"spark.sql.catalog.{catalog_name}.type", "hadoop")
 
