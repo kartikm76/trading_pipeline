@@ -35,12 +35,12 @@ cat > /tmp/permissions-policy.json <<EOF
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketLocation"],
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"],
       "Resource": ["arn:aws:s3:::trading-pipeline/*", "arn:aws:s3:::trading-pipeline"]
     },
     {
       "Effect": "Allow",
-      "Action": ["glue:GetDatabase", "glue:GetTable", "glue:GetTables", "glue:GetPartition", "glue:GetPartitions"],
+      "Action": ["glue:GetDatabase", "glue:GetDatabases", "glue:CreateDatabase", "glue:GetTable", "glue:GetTables", "glue:CreateTable", "glue:UpdateTable", "glue:DeleteTable", "glue:GetPartition", "glue:GetPartitions", "glue:CreatePartition", "glue:UpdatePartition", "glue:DeletePartition", "glue:BatchCreatePartition", "glue:BatchDeletePartition"],
       "Resource": ["arn:aws:glue:${AWS_REGION}:${AWS_ACCOUNT_ID}:catalog", "arn:aws:glue:${AWS_REGION}:${AWS_ACCOUNT_ID}:database/trading_db", "arn:aws:glue:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/trading_db/*"]
     },
     {

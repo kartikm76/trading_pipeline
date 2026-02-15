@@ -13,13 +13,15 @@ class LaymanSPYStrategy(BaseStrategy):
       - Everything else                    → HOLD
     """
 
+    lookback_days = 3  # Small window for pipeline testing
+
     def __init__(self, config, underlying):
         self.config = config
         self.underlying = underlying
 
     @property
     def required_columns(self):
-        return ["symbol", "trade_date", "expiration", "strike", "option_type", "mid_price"]
+        return ["symbol", "trade_date", "expiry_date", "strike_price", "option_type", "mid_price"]
 
     def logic(self, ldf: pl.LazyFrame) -> pl.LazyFrame:
         """Core Polars logic — generates a signal column based on price thresholds."""
@@ -37,8 +39,8 @@ class LaymanSPYStrategy(BaseStrategy):
 
     def generate_signals(self, df: DataFrame) -> DataFrame:
         output_schema = (
-            "symbol STRING, trade_date DATE, expiration DATE, "
-            "strike DOUBLE, mid_price DOUBLE, option_type STRING, "
+            "symbol STRING, trade_date DATE, expiry_date DATE, "
+            "strike_price DOUBLE, mid_price DOUBLE, option_type STRING, "
             "signal STRING, strategy_name STRING, underlying STRING"
         )
 
@@ -51,6 +53,7 @@ class LaymanSPYStrategy(BaseStrategy):
             if pdf.empty:
                 continue
 
+            pdf = self.cast_decimals(pdf)
             ldf = pl.from_pandas(pdf).lazy()
             res = self.logic(ldf)
             yield res.collect().to_pandas()

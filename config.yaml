@@ -36,20 +36,14 @@ dev:
   raw_base_path: "./data/raw" # Local base
   warehouse: "./iceberg-warehouse/"
 
-hybrid:
-  catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
-  io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
-  warehouse: "s3://trading-pipeline/iceberg-warehouse/"
-  raw_base_path: "s3://trading-pipeline/data/raw"
-
-prod:
+aws:
   catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
   io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
   use_location_clause: true
   write_mode: "merge-on-read"
   format_version: "2"
   warehouse: "s3://trading-pipeline/iceberg-warehouse/"
-  raw_base_path: "s3://trading-pipeline/data/raw" # S3 base
+  raw_base_path: "s3://trading-pipeline/data/raw"
 
 scaling:
   batch_size: 15 # Centralized batch size for the control manager

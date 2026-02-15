@@ -55,7 +55,7 @@ class ConfigManager:
             return default
 
     def _get_env_specific(self, key: str, default: Any = None) -> Any:
-        """Pulls from top-level 'dev' or 'prod' blocks based on ENV variable."""
+        """Pulls from top-level 'dev' or 'aws' blocks based on ENV variable."""
         return self.get(f"{self._env}.{key}", default)
 
     @property

@@ -14,10 +14,8 @@ This automatically packages source code, uploads to S3, and submits the EMR job.
 ## Only Rebuild Docker When Adding New pip Dependencies
 ```bash
 # 1. Update pyproject.toml with new dependency
-# 2. Rebuild & push image
+# 2. Rebuild, push, and update EMR app (all-in-one)
 ./infrastructure/build_image.sh
-# 3. Update EMR app to use new image (stops, updates, restarts)
-./infrastructure/update_application.sh
 ```
 
 ## Monitoring
@@ -70,10 +68,19 @@ Job time grew from 10 min → 30 min due to Iceberg metadata accumulation per ba
    Python code instead of shell. One EMR job, loop over batches internally.
 
 ## Key Files
-- `Dockerfile` - Custom EMR image (Python 3.12 + pip deps)
-- `infrastructure/build_image.sh` - Builds & pushes Docker image
-- `infrastructure/deploy_and_submit.sh` - Packages code, uploads to S3, submits EMR job
+**Top-level entry points:**
+- `0_batch_pipeline.sh` - Data loading orchestrator (landing → bronze → silver)
+- `1_strategy_run.sh` - Strategy execution entry point
+
+**Infrastructure helpers (each does ONE thing):**
+- `infrastructure/build_image.sh` - Build + push Docker image + update EMR app (full image lifecycle)
+- `infrastructure/deploy_and_submit.sh` - Package code → upload S3 → submit EMR job
 - `infrastructure/.spark_config` - Spark submit parameters
-- `infrastructure/env_discovery.sh` - AWS environment variables
-- `infrastructure/update_application.sh` - Updates EMR app with new Docker image
+- `infrastructure/env_discovery.sh` - Shared AWS environment variables
+- `infrastructure/watch_job.sh` - Monitor a running EMR job
+- `infrastructure/setup_iam_role.sh` - One-time IAM role & permissions setup
+- `infrastructure/terminate_all.sh` - Teardown all AWS resources
+
+**Config:**
+- `Dockerfile` - Custom EMR image (Python 3.12 + pip deps only)
 - `config.yaml` - Application configuration (scaling, strategies, etc.)

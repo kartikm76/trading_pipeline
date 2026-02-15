@@ -1,6 +1,8 @@
 import logging
 import concurrent.futures
+from datetime import datetime, timedelta
 import polars as pl
+from pyspark.sql import functions as F
 from strategies.strategy_factory import StrategyFactory
 
 logger = logging.getLogger(__name__)
@@ -48,12 +50,27 @@ class StrategyOrchestrator:
         # 1. Instantiate via updated Factory
         strategy = StrategyFactory.get_strategy(name, self.config)
 
-        # 2. Distributed processing on EMR (Spark -> Polars -> Spark)
-        gold_df = strategy.generate_signals(self.spark.table(silver_table))
+        # 2. Apply lookback window filter (Iceberg partition pruning on trade_date)
+        #    Use the silver table's max trade_date as the anchor so the pipeline
+        #    works regardless of when it runs (backfill-safe).
+        full_silver = self.spark.table(silver_table)
+        max_date_row = full_silver.select(F.max("trade_date").alias("max_td")).first()
+        max_date = max_date_row["max_td"] if max_date_row else None
 
-        # 3. Write to strategy-specific Gold table using createOrReplace
-        # Pattern: trading_db.gold_ironcondorstrategy
-        gold_table = f"{self.config.db_name}.gold_{name.lower()}"
+        if max_date is None:
+            logger.warning(f"⚠️ {name}: Silver table is empty — skipping.")
+            return
+
+        cutoff_date = (max_date - timedelta(days=strategy.lookback_days)).strftime("%Y-%m-%d")
+        silver_df = full_silver.filter(F.col("trade_date") >= cutoff_date)
+        logger.info(f"📊 {name}: lookback={strategy.lookback_days} days, max_date={max_date}, cutoff={cutoff_date}")
+
+        # 3. Distributed processing on EMR (Spark -> Polars -> Spark)
+        gold_df = strategy.generate_signals(silver_df)
+
+        # 4. Write to strategy-specific Gold table using createOrReplace
+        # Pattern: glue_catalog.trading_db.gold_ironcondorstrategy
+        gold_table = f"{self.config.catalog}.{self.config.db_name}.gold_{name.lower()}"
 
         gold_df.writeTo(gold_table) \
             .tableProperty("format-version", "2") \

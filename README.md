@@ -1,670 +1,432 @@
-# Trading Pipeline - Options Chain Data Processing
+# Trading Pipeline
 
-A production-ready data pipeline for processing options chain data using PySpark, Apache Iceberg, and the Medallion Architecture (Bronze → Silver → Gold).
-
-## 📋 Table of Contents
-- [Prerequisites](#-prerequisites)
-- [Installation](#-installation)
-- [Project Structure](#-project-structure)
-- [Configuration](#-configuration)
-- [Running the Pipeline](#-running-the-pipeline)
-  - [Local Run](#-local-run)
-  - [Production Run (AWS EMR Serverless)](#-production-run-aws-emr-serverless)
-- [Inspecting Data](#-inspecting-data)
-- [Data Schema](#-data-schema)
-- [Quick Reference Commands](#-quick-reference-commands)
-- [Troubleshooting](#-troubleshooting)
-- [Pipeline Stages](#-pipeline-stages)
-- [Customization](#-customization)
+A production-grade options chain data pipeline built on **PySpark**, **Apache Iceberg**, and **AWS EMR Serverless**. Processes raw OPRA options data through a Medallion Architecture (Bronze → Silver → Gold) and generates trading signals via pluggable strategies.
 
 ---
 
-## 🔧 Prerequisites
+## Table of Contents
 
-Before you begin, make sure you have the following installed on your machine:
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [One-Time AWS Setup](#one-time-aws-setup)
+- [Installation](#installation)
+- [Running the Pipeline](#running-the-pipeline)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [Adding a New Strategy](#adding-a-new-strategy)
+- [Data Schema](#data-schema)
+- [Monitoring & Debugging](#monitoring--debugging)
+- [Useful Commands](#useful-commands)
+- [Troubleshooting](#troubleshooting)
 
-### 1. **Python 3.12 or higher**
-Check if Python is installed:
-```bash
-python3 --version
+---
+
+## Architecture
+
+```
+                        ┌──────────────────────────────────────────────┐
+  CSV files             │           AWS EMR Serverless                 │
+  (OPRA data)           │                                              │
+       │                │   Bronze ──► Silver ──► Gold                 │
+       ▼                │   (raw)     (enriched)   (signals)           │
+  S3 Landing Zone ─────►│                                              │
+                        │   Apache Iceberg tables in AWS Glue Catalog  │
+                        └──────────────────────────────────────────────┘
+                                          │
+                                          ▼
+                                  S3 Iceberg Warehouse
+                                  (s3://trading-pipeline/)
 ```
 
-If not installed, download from [python.org](https://www.python.org/downloads/)
+| Layer | Table | Description |
+|-------|-------|-------------|
+| **Bronze** | `bronze_options_chain` | Raw CSV data, schema-preserved |
+| **Silver** | `enriched_options_silver` | Decomposed OSI symbols, calculated mid-price, filtered |
+| **Gold** | `gold_<strategyname>` | Trading signals (BUY_CALL / BUY_PUT / HOLD) per strategy |
 
-### 2. **Java 11 or higher** (Required for PySpark)
-Check if Java is installed:
+---
+
+## Prerequisites
+
+| Tool | Version | Purpose | Install |
+|------|---------|---------|---------|
+| **Python** | 3.12+ | Runtime | `brew install python@3.12` or [python.org](https://www.python.org/downloads/) |
+| **Java** | 11+ | PySpark engine | `brew install openjdk@11` |
+| **uv** | latest | Python package manager | `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| **AWS CLI** | v2 | AWS operations | `brew install awscli` |
+| **Docker Engine** | latest | Build EMR custom images | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or **Colima** (see below) |
+
+### Docker Engine — Docker Desktop vs Colima
+
+You need a Docker engine to build the custom EMR Serverless image. Either option works:
+
+**Option A: Docker Desktop** (simplest)
 ```bash
-java -version
+# Install and launch Docker Desktop from https://www.docker.com/products/docker-desktop/
 ```
 
-If not installed:
-- **Mac**: `brew install openjdk@11`
-- **Linux**: `sudo apt-get install openjdk-11-jdk`
-- **Windows**: Download from [Oracle](https://www.oracle.com/java/technologies/downloads/)
-
-### 3. **uv** (Python Package Manager)
-Install uv:
+**Option B: Colima** (lightweight, no GUI, free for commercial use)
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+brew install colima docker docker-buildx
+
+# Start Colima with buildx support
+colima start --cpu 4 --memory 8 --arch aarch64
+
+# Verify
+docker info
+docker buildx version
 ```
 
-Or on Mac:
-```bash
-brew install uv
-```
+> **Note**: The pipeline builds multi-arch images (`amd64` + `arm64`) using `docker buildx`. Ensure buildx is available regardless of which engine you use.
 
-Verify installation:
+### AWS Credentials
+
+Configure your AWS credentials with access to the target account:
 ```bash
-uv --version
+aws configure
+# Region: us-east-1
+# Output: json
 ```
 
 ---
 
-## 📥 Installation
+## One-Time AWS Setup
 
-### Step 1: Clone the Repository
+These scripts only need to run once to provision the AWS infrastructure:
+
 ```bash
+# 1. Create IAM role with S3, Glue, ECR, and CloudWatch permissions
+./infrastructure/setup_iam_role.sh
+
+# 2. Build the Docker image, push to ECR, and register with EMR app
+./infrastructure/build_image.sh
+```
+
+> **When to re-run `build_image.sh`**: Only when you add/change pip dependencies in `pyproject.toml`. Code changes do NOT require a Docker rebuild — source code is shipped to S3 on every job submission.
+
+---
+
+## Installation
+
+```bash
+# Clone
 git clone https://github.com/kartikm76/trading_pipeline.git
 cd trading_pipeline
-```
 
-### Step 2: Install Dependencies
-The project uses `uv` for dependency management. All dependencies are defined in `pyproject.toml`.
-
-```bash
-# Install all dependencies and create virtual environment
+# Install all dependencies (creates .venv automatically)
 uv sync
 ```
 
-This will:
-- Create a virtual environment (`.venv`)
-- Install all required packages (PySpark, PyArrow, etc.)
-- Set up the project for development
-
 ---
 
-## 📁 Project Structure
+## Running the Pipeline
 
-```
-trading_pipeline/
-├── src/
-│   ├── adapters/          # Data ingestion adapters (CSV, Parquet, API)
-│   ├── config/            # Configuration management
-│   ├── filters/           # Data filtering policies
-│   ├── models/            # Data models
-│   ├── services/          # Core business logic (orchestrator, enricher)
-│   ├── strategies/        # Trading signal generation strategies
-│   ├── utils/             # Utility functions
-│   └── main.py            # Main entry point
-├── infrastructure/        # AWS deployment and automation scripts
-│   ├── 1_setup_iam_role.sh       # Creates IAM roles for EMR Serverless
-│   ├── 2_deploy_and_submit.sh   # Deploys code and submits Spark jobs
-│   ├── 3_watch_job.sh            # Monitors running EMR jobs
-│   ├── 9_terminate_all.sh        # Cleanup script
-│   └── dist/                     # Build artifacts (auto-generated)
-├── tests/                 # Test scripts
-│   └── inspect_tables.py  # View table schemas and data
-├── data/
-│   ├── raw/
-│   │   ├── landing/       # [S3] Incoming CSV files (bulk upload)
-│   │   ├── staging/       # [S3] Files being processed by Spark
-│   │   └── processed/     # [S3] Successfully processed files (archive)
-│   └── iceberg-warehouse/ # [Local/S3] Iceberg table storage
-├── batch_control.sh       # Automated batch processing controller
-├── config.yaml            # Main configuration file
-├── pyproject.toml         # Project dependencies
-└── README.md              # This file
-```
+There are two top-level entry points. Each one packages your latest code, uploads it to S3, and submits an EMR Serverless job — all in one command.
 
----
+### `0_batch_pipeline.sh` — Load Data (Bronze + Silver)
 
-## ⚙️ Configuration
-
-### config.yaml
-This file controls all pipeline settings. Key sections:
-
-```yaml
-project:
-  name: "Option Trading Pipeline"
-
-storage:
-  catalog_name: "glue_catalog"
-  db_name: "trading_db"
-  tables:
-    bronze: "bronze_options_chain"
-    silver: "enriched_options_silver"
-    gold: "strategy_signals"
-
-data_format:
-  raw: "csv"           # Format of input data
-  iceberg: "parquet"   # Format for Iceberg tables
-
-dev:
-  catalog_type: "hadoop"
-  use_location_clause: false
-  raw_base_path: "./data/raw"              # Local directory
-  warehouse: "./iceberg-warehouse/"
-
-prod:
-  catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
-  io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
-  use_location_clause: true
-  raw_base_path: "s3://trading-pipeline/data/raw"  # S3 bucket
-  warehouse: "s3://trading-pipeline/iceberg-warehouse/"
-
-strategies:
-  - class: "LaymanSPYStrategy"
-    active: "Y"
-    underlying: "SPY"
-
-filters:
-  - class: "ZeroDTEPolicy"
-    active: "N"
-  - class: "LiquidityPolicy"
-    active: "N"
-
-underlying_mapping:
-  SPX: "SPY"   # S&P 500 Index → SPDR S&P 500 ETF
-  NDX: "QQQ"   # Nasdaq-100 Index → Invesco QQQ ETF
-  RUT: "IWM"   # Russell 2000 Index → iShares Russell 2000 ETF
-```
-
----
-
-## 🚀 Running the Pipeline
-
-The pipeline can run in two environments: **Local** (for development/testing) and **Production** (AWS EMR Serverless).
-
----
-
-## 💻 Local Run
-
-### Prerequisites
-- Place your CSV files in `./data/raw/` directory
-- Ensure local directories exist
-
-### Setup Data Directory
-```bash
-mkdir -p data/raw
-# Copy your CSV file(s) here
-cp /path/to/your/opra-pillar-*.csv data/raw/
-```
-
-### Bootstrap Mode (First Time)
-Creates all tables from scratch:
+Processes CSV files from the S3 landing zone into Bronze and Silver Iceberg tables.
 
 ```bash
-ENV=dev uv run python src/main.py --bootstrap
-```
-
-**What happens:**
-1. ✅ Creates local Iceberg catalog (Hadoop-based)
-2. ✅ Reads CSV from `./data/raw/` directory
-3. ✅ Creates Bronze table with raw data
-4. ✅ Creates Silver table with enriched data (decomposed OSI symbols + any active filters)
-5. ✅ Creates Gold table with trading signals
-6. ✅ Stores tables in `./iceberg-warehouse/`
-
-**Expected Output:**
-```
-Setting up Iceberg infrastructure...
-Creating catalog: glue_catalog
-Creating database: trading_db
-Ingesting data from CSV...
-Processing 10M+ records...
---- [Orchestration] Gold table glue_catalog.trading_db.strategy_signals created ---
-```
-
-### Daily Mode (Incremental)
-Appends new data without recreating tables:
-
-```bash
-ENV=dev 
-uv run python src/main.py
-```
-
-**What happens:**
-1. ✅ Reads new CSV files from `./data/raw/`
-2. ✅ Appends to existing Bronze table
-3. ✅ Appends to existing Silver table (decomposed OSI symbols + any active filters)
-4. ✅ Appends to existing Gold table (strategy signals)
-
-### Inspect Local Tables
-```bash
-uv run python tests/inspect_tables.py
-```
-
-**Output shows:**
-- Table schemas with data types
-- Sample rows from each table
-- Record counts
-
----
-
-## ☁️ Production Run (AWS EMR Serverless)
-
-### Prerequisites
-- AWS EMR Serverless application configured
-- IAM roles set up (use `infrastructure/1_setup_iam_role.sh`)
-- S3 bucket: `s3://trading-pipeline/`
-- CSV files uploaded to S3 landing zone
-
-### Data Flow Architecture
-
-**S3 Landing → S3 Staging → Spark Processing → S3 Processed (Archive)**
-
-```
-s3://trading-pipeline/data/raw/
-├── landing/          # Upload CSV files here
-├── staging/          # Files being processed (temporary)
-└── processed/        # Successfully processed files (archive)
-```
-
-### Pre-Run Checklist
-
-Before running production pipeline, ensure clean state:
-
-```bash
-# 1. Drop existing Glue tables
-aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
-aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
-aws glue delete-table --database-name "trading_db" --name "strategy_signals"
-
-# 2. Clean S3 Iceberg warehouse
-aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
-
-# 3. Upload CSV files to landing zone
-aws s3 cp /local/path/*.csv s3://trading-pipeline/data/raw/landing/
-
-# 4. Verify files are in landing
-aws s3 ls s3://trading-pipeline/data/raw/landing/
-```
-
-### Option 1: Automated Batch Processing (Recommended)
-
-Use `batch_control.sh` for bulk file processing:
-
-```bash
-./batch_control.sh prod
+./0_batch_pipeline.sh
 ```
 
 **How it works:**
-1. **Batch 1** (First 15 files): Runs in `bootstrap` mode → Creates tables
-2. **Batch 2+** (Next 15 files each): Runs in `daily` mode → Appends data
-3. Files move: `landing/` → `staging/` → `processed/`
+1. Picks up to 15 CSV files from `s3://trading-pipeline/data/raw/landing/`
+2. Moves them to `staging/`
+3. Submits an EMR job (`bootstrap` for the first batch, `daily` for subsequent)
+4. Archives processed files to `processed/`
+5. Repeats until the landing zone is empty
 
-> **📌 NOTE: Why 15 Files Per Batch?**
->
-> The batch size of **15 files** is optimized for AWS personal account resource constraints:
-> - **AWS Free Tier Limit**: 16 vCPUs available
-> - **Worker Allocation**: 4 worker threads required for Spark processing
-> - **Optimal Batch Size**: 15 files maximizes throughput without exceeding vCPU limits
->
-> **Performance Metrics:**
-> - **File Size**: ~1.5 GB each
-> - **Records per File**: ~10 million records
-> - **Processing Time**: ~8 minutes per batch (15 files)
-> - **Total Data per Batch**: ~22.5 GB, ~150 million records
+| Batch | Mode | Table Operation | When |
+|-------|------|-----------------|------|
+| First batch | `bootstrap` | `createOrReplace` — creates tables from scratch | First 15 files |
+| Subsequent batches | `daily` | `append` — incremental insert | Remaining files |
 
-**Sample Output:**
-```
-🏁 Starting Batch Controller [Env: prod]
-🏗️  Deploying Code...
-move: s3://trading-pipeline/data/raw/landing/opra-pillar-20250128.cbbo-1m.csv to s3://trading-pipeline/data/raw/staging/opra-pillar-20250128.cbbo-1m.csv
-move: s3://trading-pipeline/data/raw/landing/opra-pillar-20250129.cbbo-1m.csv to s3://trading-pipeline/data/raw/staging/opra-pillar-20250129.cbbo-1m.csv
-...
-🚀 Submitting bootstrap job to EMR Serverless...
-⏳ Monitoring Job: 00g387u9hiaj0o0b
-✅ Batch Success.
-move: s3://trading-pipeline/data/raw/staging/opra-pillar-20250128.cbbo-1m.csv to s3://trading-pipeline/data/raw/processed/opra-pillar-20250128.cbbo-1m.csv
-...
-🚀 Submitting daily job to EMR Serverless...
-⏳ Monitoring Job: 00g3883t57dijo0b
-✅ Batch Success.
-```
+### `1_strategy_run.sh` — Execute Strategies (Gold)
 
-### Option 2: Manual Single Run
+Runs active trading strategies against the Silver table and writes Gold tables.
 
-For manual control over individual runs:
-
-#### Bootstrap Mode (First Time)
 ```bash
-bash infrastructure/2_deploy_and_submit.sh bootstrap
+# Run all active strategies (from config.yaml)
+./1_strategy_run.sh
+
+# Run specific strategies only
+./1_strategy_run.sh --strategies IronCondorStrategy LaymanSPYStrategy
 ```
 
-**What happens:**
-1. ✅ Packages code and uploads to S3
-2. ✅ Submits Spark job to EMR Serverless
-3. ✅ Reads CSV from `s3://trading-pipeline/data/raw/staging/`
-4. ✅ Creates Bronze, Silver, Gold tables in AWS Glue Catalog
-5. ✅ Stores Iceberg data in `s3://trading-pipeline/iceberg-warehouse/`
+| Mode | Command | What it does |
+|------|---------|--------------|
+| All active | `./1_strategy_run.sh` | Runs every strategy with `active: "Y"` in config.yaml |
+| Specific | `./1_strategy_run.sh --strategies <Name1> <Name2>` | Runs only the named strategies |
 
-#### Daily Mode (Incremental)
+### Local Development (no AWS)
+
+For local testing with small datasets:
+
 ```bash
-bash infrastructure/2_deploy_and_submit.sh daily
+# Place CSV files in ./data/raw/
+mkdir -p data/raw
+cp /path/to/sample.csv data/raw/
+
+# Bootstrap (first time — creates local Iceberg tables)
+ENV=dev uv run python src/main.py --mode dataload --bootstrap
+
+# Daily (incremental append)
+ENV=dev uv run python src/main.py --mode dataload
+
+# Run strategies locally
+ENV=dev uv run python src/main.py --mode strategy
 ```
 
-**What happens:**
-1. ✅ Submits Spark job (no code upload needed)
-2. ✅ Reads new CSV files from staging
-3. ✅ Appends to existing tables
+---
 
-#### Monitor Job
+## Project Structure
+
+```
+trading_pipeline/
+├── 0_batch_pipeline.sh              # Entry point: data loading (landing → bronze → silver)
+├── 1_strategy_run.sh                # Entry point: strategy execution (silver → gold)
+├── config.yaml                      # All pipeline configuration
+├── Dockerfile                       # Custom EMR image (Python 3.12 + pip deps)
+├── pyproject.toml                   # Python dependencies
+│
+├── src/
+│   ├── main.py                      # CLI entry point (--mode dataload|strategy)
+│   ├── config/
+│   │   ├── config_manager.py        # YAML config loader, env-aware (dev/aws)
+│   │   └── spark_session.py         # SparkSession builder (local/aws)
+│   ├── adapters/                    # Data ingestion (CSV, Parquet, API)
+│   ├── filters/                     # Silver-layer filter policies
+│   ├── services/
+│   │   ├── data_load_orchestrator.py    # Bronze + Silver pipeline
+│   │   ├── strategy_orchestrator.py     # Gold pipeline (parallel strategy execution)
+│   │   └── silver_enricher.py           # OSI symbol decomposition + mid-price calc
+│   ├── strategies/
+│   │   ├── base_strategy.py             # Abstract base (Spark → Polars → Spark)
+│   │   ├── strategy_factory.py          # Instantiates strategies from config
+│   │   ├── layman_spy_strategy.py       # Simple mid-price signal strategy
+│   │   └── iron_condor_strategy.py      # Iron condor spread strategy
+│   └── utils/                       # Helpers (data gen, Iceberg setup, etc.)
+│
+├── infrastructure/                  # AWS deployment scripts (each does ONE thing)
+│   ├── env_discovery.sh             # Shared AWS env vars (account, region, app ID)
+│   ├── .spark_config                # Spark submit parameters
+│   ├── build_image.sh               # Build + push Docker image + update EMR app
+│   ├── deploy_and_submit.sh         # Package code → upload S3 → submit EMR job
+│   ├── watch_job.sh                 # Monitor a running EMR job
+│   ├── setup_iam_role.sh            # One-time IAM role & permissions setup
+│   └── terminate_all.sh             # Teardown all AWS resources
+│
+└── tests/
+    └── test_spark.py
+```
+
+---
+
+## Configuration
+
+All settings live in **`config.yaml`**. Key sections:
+
+### Environment Blocks
+
+The pipeline auto-selects the config block based on the `ENV` environment variable:
+
+| ENV value | Config block | Set by | Catalog |
+|-----------|-------------|--------|---------|
+| `dev` (default) | `dev:` | You, locally | Local Hadoop |
+| `aws` | `aws:` | EMR Serverless (via `.spark_config`) | AWS Glue + S3 |
+
+### Strategy Switchboard
+
+Toggle strategies on/off without code changes:
+
+```yaml
+strategies:
+  - class: "LaymanSPYStrategy"
+    active: "Y"              # ← Will run
+    underlying: "SPY"
+  - class: "IronCondorStrategy"
+    active: "N"              # ← Skipped
+    underlying: "SPY"
+```
+
+### Scaling
+
+Resource allocation per run type (tuned for AWS vCPU quotas):
+
+```yaml
+scaling:
+  bootstrap:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+  daily:
+    max_executors: 2
+    executor_memory: "8G"
+    driver_memory: "8G"
+```
+
+---
+
+## Adding a New Strategy
+
+1. Create `src/strategies/my_strategy.py`:
+
+```python
+import polars as pl
+from strategies.base_strategy import BaseStrategy
+
+class MyStrategy(BaseStrategy):
+    lookback_days = 7  # How many days of data to process
+
+    @property
+    def required_columns(self):
+        return ["symbol", "trade_date", "expiry_date", "strike_price",
+                "mid_price", "option_type"]
+
+    def logic(self, ldf: pl.LazyFrame) -> pl.LazyFrame:
+        # Your Polars-based signal logic here
+        return ldf.with_columns(
+            pl.when(pl.col("mid_price") < 2.0)
+              .then(pl.lit("BUY_CALL"))
+              .otherwise(pl.lit("HOLD"))
+              .alias("signal")
+        )
+
+    def generate_signals(self, df):
+        pass  # Not used — logic() is the primary engine
+```
+
+2. Register in `src/strategies/__init__.py`
+3. Add to `config.yaml`:
+```yaml
+strategies:
+  - class: "MyStrategy"
+    active: "Y"
+    underlying: "SPY"
+```
+4. Run: `./1_strategy_run.sh`
+
+The orchestrator will create a Gold table named `gold_mystrategy` automatically.
+
+---
+
+## Data Schema
+
+### Silver Table — `enriched_options_silver`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | string | OSI symbol (e.g., `SPX   250221C01000000`) |
+| `underlying` | string | Mapped tradeable ETF (e.g., `SPY`) |
+| `trade_date` | date | Trading date (from filename) |
+| `expiry_date` | date | Option expiration (from symbol) |
+| `option_type` | string | `CALL` or `PUT` |
+| `strike_price` | decimal(10,2) | Strike price |
+| `mid_price` | decimal(10,2) | `(bid_px_00 + ask_px_00) / 2` |
+| `bid_px_00` / `ask_px_00` | double | Best bid/ask prices |
+| `bid_sz_00` / `ask_sz_00` | integer | Best bid/ask sizes |
+| `ts_recv` / `ts_event` | timestamp | Receive / event timestamps |
+| `file_name` | string | Source CSV filename |
+
+### Gold Table — `gold_<strategyname>`
+
+Inherits all Silver columns plus:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `signal` | string | `BUY_CALL`, `BUY_PUT`, or `HOLD` |
+| `strategy_name` | string | Strategy class name |
+
+---
+
+## Monitoring & Debugging
+
 ```bash
-bash infrastructure/3_watch_job.sh <job-id>
+# Watch a running job (polls every 10s)
+./infrastructure/watch_job.sh <job-run-id>
+
+# One-shot status check
+aws emr-serverless get-job-run \
+  --application-id $(cat .application-id) \
+  --job-run-id <job-run-id> \
+  --query 'jobRun.{state:state,details:stateDetails}' --output json
+
+# Spark UI dashboard
+aws emr-serverless get-dashboard-for-job-run \
+  --application-id $(cat .application-id) \
+  --job-run-id <job-run-id> --query 'url' --output text
 ```
+
+### Query Gold Tables via Athena
+
+```sql
+-- Signal distribution
+SELECT trade_date, signal, COUNT(*) as cnt
+FROM trading_db.gold_laymanspystrategy
+GROUP BY trade_date, signal
+ORDER BY trade_date DESC;
+
+-- Silver table date coverage
+SELECT trade_date, COUNT(*) as records
+FROM trading_db.enriched_options_silver
+GROUP BY trade_date ORDER BY trade_date DESC;
+```
+
+---
+
+## Useful Commands
 
 ### S3 File Management
 
 ```bash
-# Check file counts
-aws s3 ls s3://trading-pipeline/data/raw/landing/ | wc -l
-aws s3 ls s3://trading-pipeline/data/raw/staging/ | wc -l
-aws s3 ls s3://trading-pipeline/data/raw/processed/ | wc -l
-
-# Move files between directories
-aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
-
-# Clean staging area
-aws s3 rm s3://trading-pipeline/data/raw/staging/ --recursive
-
-# Upload new files
-aws s3 cp /local/path/*.csv s3://trading-pipeline/data/raw/landing/
-```
-
-### Workflow Phases (Batch Processing)
-
-| Phase | Mode | Action | Table Operation |
-|-------|------|--------|-----------------|
-| **Batch 1** (First 15 files) | `bootstrap` | Deploy code + process data | `createOrReplace` (clean start) |
-| **Batch 2** (Next 15 files) | `daily` | Process data only | `append` (incremental) |
-| **Batch 3+** (Remaining files) | `daily` | Process data only | `append` (incremental) |
-
-### Cleanup
-
-```bash
-# Terminate all EMR resources
-bash infrastructure/9_terminate_all.sh
-```
-
----
-
-## 🔍 Inspecting Data
-
-### Local Environment
-
-View table schemas and sample data:
-
-```bash
-uv run python tests/inspect_tables.py
-
-```
-
-**Output shows:**
-- Table schemas with data types
-- Sample rows from Bronze, Silver, and Gold tables
-- Record counts
-
-### Using PySpark Shell (Advanced)
-```bash
-uv run pyspark
-```
-
-Then in the shell:
-```python
-# View silver table
-spark.table("glue_catalog.trading_db.enriched_options_silver").show(5)
-
-# View gold table with signal distribution
-spark.table("glue_catalog.trading_db.strategy_signals").groupBy("signal").count().show()
-```
-
-### Production Environment (AWS)
-
-Query tables using AWS Athena or EMR Studio:
-
-```sql
--- View silver table
-SELECT * FROM glue_catalog.trading_db.enriched_options_silver LIMIT 10;
-
--- Signal distribution
-SELECT signal, COUNT(*) as count
-FROM glue_catalog.trading_db.strategy_signals
-GROUP BY signal;
-
--- Daily summary
-SELECT trade_date, underlying, COUNT(*) as records
-FROM glue_catalog.trading_db.enriched_options_silver
-GROUP BY trade_date, underlying
-ORDER BY trade_date DESC;
-```
-
----
-
-## 📊 Data Schema
-
-### Silver Table Schema
-
-The enriched silver table contains the following columns in order:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `symbol` | string | OSI symbol (e.g., "SPX   250221C01000000") |
-| `underlying` | string | Mapped tradeable underlying (e.g., "SPY") |
-| `trade_date` | date | Date extracted from filename |
-| `expiry_date` | date | Option expiration date from symbol |
-| `option_type` | string | "CALL" or "PUT" |
-| `strike_price` | decimal(10,2) | Strike price (e.g., 1000.00) |
-| `ts_recv` | timestamp | Timestamp received |
-| `ts_event` | timestamp | Event timestamp |
-| `rtype` | integer | Record type |
-| `publisher_id` | integer | Publisher ID |
-| `instrument_id` | integer | Instrument ID |
-| `side` | string | Side (B/A/N) |
-| `price` | double | Trade price (if applicable) |
-| `size` | integer | Size |
-| `flags` | integer | Flags |
-| `bid_px_00` | double | Best bid price |
-| `ask_px_00` | double | Best ask price |
-| `bid_sz_00` | integer | Best bid size |
-| `ask_sz_00` | integer | Best ask size |
-| `bid_pb_00` | integer | Bid publisher |
-| `ask_pb_00` | integer | Ask publisher |
-| `mid_price` | decimal(10,2) | Calculated mid price |
-| `file_name` | string | Source filename |
-
-### Sample Data
-
-```
-+---------------------+----------+----------+-----------+-----------+------------+-------------------+
-|symbol               |underlying|trade_date|expiry_date|option_type|strike_price|ts_recv            |
-+---------------------+----------+----------+-----------+-----------+------------+-------------------+
-|SPX   250221C01000000|SPY       |2025-01-28|2025-02-21 |CALL       |1000.00     |2025-01-28 09:31:00|
-+---------------------+----------+----------+-----------+-----------+------------+-------------------+
-```
-
-### Gold Table Schema
-
-The gold table contains trading signals:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| All silver columns | - | Inherited from silver table |
-| `signal` | string | Trading signal: "BUY_CALL", "SELL_PUT", or "HOLD" |
-
-### Signal Distribution Example
-
-```
-+--------+-------+
-|signal  |count  |
-+--------+-------+
-|HOLD    |940046 |
-|SELL_PUT|4535586|
-|BUY_CALL|4611298|
-+--------+-------+
-Total: 10,086,930 records
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Issue: "Java not found"
-**Solution:** Install Java 11+ and set `JAVA_HOME`:
-```bash
-export JAVA_HOME=$(/usr/libexec/java_home -v 11)
-```
-
-### Issue: "Module not found" errors
-**Solution:** Make sure you're using `uv run`:
-```bash
-# ❌ Wrong
-python src/main.py
-
-# ✅ Correct
-uv run python src/main.py
-```
-
-### Issue: "Table already exists" error
-**Solution:** Run in bootstrap mode to recreate tables:
-```bash
-uv run python src/main.py --bootstrap
-```
-
-### Issue: Version conflicts
-**Solution:** Reinstall dependencies:
-```bash
-uv sync --reinstall
-```
-
-### Issue: Permission errors on Mac
-**Solution:** Grant terminal full disk access in System Preferences → Security & Privacy
-
----
-
-## 📊 Pipeline Stages
-
-### 🥉 Bronze Layer (Raw Data)
-- Ingests raw CSV files
-- Preserves original data
-
-### 🥈 Silver Layer (Enriched Data)
-- Adds calculated columns (mid_price, trade_date, expiry_date, option_type from symbol)
-- Applies data quality filters (based on YAML config)
-- Partitioned by trade_date
-
-### 🥇 Gold Layer (Trading Signals)
-- Executes trading strategies
-- Generates BUY/SELL/HOLD signals
-- Ready for consumption by trading systems
-
----
-
-## 🔄 Customization
-
-### Adding a New Strategy
-1. Create a new file in `src/strategies/` (e.g., `my_strategy.py`)
-2. Inherit from `BaseStrategy`
-3. Implement `generate_signals()` method
-4. Add to `src/strategies/__init__.py`
-5. Update `config.yaml` to activate it
-
-### Adding a New Filter
-1. Create a new class in `src/filters/bronze_to_silver_filter.py`
-2. Inherit from `FilterPolicy`
-3. Implement `apply()` method
-4. Add to `src/filters/__init__.py`
-5. Update `config.yaml` to activate it
-
----
-
-## 📞 Support
-
-If you encounter any issues:
-1. Check the [Troubleshooting](#troubleshooting) section
-2. Review the error message carefully
-3. Ensure all prerequisites are installed
-4. Contact the team for help
-
----
-
-## 📝 Quick Reference Commands
-
-### 💻 Local Development
-
-```bash
-# Install dependencies
-uv sync
-
-# Bootstrap mode (first time - creates tables)
-ENV=dev uv run python src/main.py --bootstrap
-
-# Daily mode (incremental - appends data)
-ENV=dev uv run python src/main.py
-
-# Inspect tables
-uv run python tests/inspect_tables.py
-
-# Check versions
-python3 --version
-java -version
-uv --version
-```
-
-### ☁️ Production (AWS EMR Serverless)
-
-#### Automated Batch Processing
-```bash
-# Process all files in landing zone (recommended)
-./batch_control.sh prod
-```
-
-#### Manual Single Run
-```bash
-# Bootstrap mode (first time - creates tables)
-bash infrastructure/2_deploy_and_submit.sh bootstrap
-
-# Daily mode (incremental - appends data)
-bash infrastructure/2_deploy_and_submit.sh daily
-
-# Monitor running job
-bash infrastructure/3_watch_job.sh <job-id>
-
-# Cleanup all resources
-bash infrastructure/9_terminate_all.sh
-```
-
-#### S3 File Management
-```bash
-# Upload files to landing zone
+# Upload CSVs to landing zone
 aws s3 cp /local/path/*.csv s3://trading-pipeline/data/raw/landing/
 
-# Check file counts
-aws s3 ls s3://trading-pipeline/data/raw/landing/ | wc -l
-aws s3 ls s3://trading-pipeline/data/raw/staging/ | wc -l
+# Check file counts per zone
+aws s3 ls s3://trading-pipeline/data/raw/landing/   | wc -l
+aws s3 ls s3://trading-pipeline/data/raw/staging/   | wc -l
 aws s3 ls s3://trading-pipeline/data/raw/processed/ | wc -l
 
-# Move processed files back to landing (for reprocessing)
+# Reprocess: move archived files back to landing
 aws s3 mv s3://trading-pipeline/data/raw/processed/ s3://trading-pipeline/data/raw/landing/ --recursive
-
-# Clean staging area
-aws s3 rm s3://trading-pipeline/data/raw/staging/ --recursive
 ```
 
-#### AWS Glue Table Management
-```bash
-# Drop tables (for clean restart)
-aws glue delete-table --database-name "trading_db" --name "bronze_options_chain"
-aws glue delete-table --database-name "trading_db" --name "enriched_options_silver"
-aws glue delete-table --database-name "trading_db" --name "strategy_signals"
+### Glue Table Management
 
-# List all tables
-aws glue get-tables --database-name "trading_db"
+```bash
+# List tables
+aws glue get-tables --database-name trading_db --query 'TableList[].Name'
+
+# Drop a table (for clean restart)
+aws glue delete-table --database-name trading_db --name bronze_options_chain
 
 # Clean Iceberg warehouse
 aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 ```
 
+### Infrastructure
+
+```bash
+# Rebuild Docker image (only when pip deps change)
+./infrastructure/build_image.sh
+
+# Teardown all AWS resources (EMR app + IAM role)
+./infrastructure/terminate_all.sh
+```
+
 ---
 
-**Happy Data Pipelining! 📈**
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `Java not found` | `brew install openjdk@11` and set `export JAVA_HOME=$(/usr/libexec/java_home -v 11)` |
+| `Module not found` errors (local) | Use `uv run python src/main.py` not `python src/main.py` |
+| `Table already exists` | Run with `--bootstrap` to recreate tables |
+| `ServiceQuotaExceededException: vCPU` | Reduce `max_executors` in config.yaml or request AWS quota increase |
+| `AccessDeniedException: glue:CreateTable` | Re-run `./infrastructure/setup_iam_role.sh` to update IAM permissions |
+| `can't open file '/app/src/main.py'` | Entry point must be S3-based (`s3://`), not container path. Check `deploy_and_submit.sh` |
+| Docker build fails | Ensure Docker/Colima is running: `docker info`. For Colima: `colima start` |
+| Version conflicts | `uv sync --reinstall` |
