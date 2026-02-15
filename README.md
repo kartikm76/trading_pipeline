@@ -88,6 +88,22 @@ aws configure
 # Output: json
 ```
 
+### Local Data Directories
+
+For local development (`dev` mode), create the data folder structure:
+
+```bash
+mkdir -p data/raw/{landing,staging,processed}
+```
+
+| Directory | Purpose |
+|-----------|---------|
+| `data/raw/landing/` | Drop zone for new CSV files (local equivalent of S3 landing) |
+| `data/raw/staging/` | Active processing zone — CSVs are read from here during dataload |
+| `data/raw/processed/` | Archived CSVs after successful processing |
+
+> **Note**: In dev mode, the pipeline reads CSVs from `data/raw/staging/`. Place your CSV files there before running dataload.
+
 ---
 
 ## One-Time AWS Setup
@@ -194,6 +210,12 @@ trading_pipeline/
 ├── config.yaml                      # All pipeline configuration
 ├── Dockerfile                       # Custom EMR image (Python 3.12 + pip deps)
 ├── pyproject.toml                   # Python dependencies
+│
+├── data/                            # Local data directories (dev mode only)
+│   └── raw/
+│       ├── landing/                 # Drop zone for new CSV files
+│       ├── staging/                 # Active processing zone (CSVs read from here)
+│       └── processed/               # Archived CSVs after successful processing
 │
 ├── src/
 │   ├── main.py                      # CLI entry point (--mode dataload|strategy)

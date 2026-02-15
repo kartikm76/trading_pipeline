@@ -1,7 +1,6 @@
 from adapters.adapter_factory import AdapterFactory
 from utils.iceberg_setup import IcebergTableManager
 from services.silver_enricher import SilverEnricher
-from strategies.strategy_factory import StrategyFactory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,14 +33,7 @@ class DataLoadOrchestrator:
             .partitionedBy("trade_date") \
             .createOrReplace()
 
-        #-- 4. Gold (Strategy Execution)
-        strategy = StrategyFactory.get_strategy(self.config)
-        gold_df = strategy.generate_signals(self.spark.table(silver_table))
-
-        gold_table = self.config.get_table_path('gold')
-        gold_df.writeTo(gold_table) .createOrReplace()
-
-        logger.info(f"--- [Orchestration] Gold table {gold_table} created ---")
+        logger.info(f"✅ Dataload complete: Bronze + Silver tables created (bootstrap={is_bootstrap})")
 
 
 
