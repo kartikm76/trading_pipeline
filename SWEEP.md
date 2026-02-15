@@ -71,7 +71,7 @@ Job time grew from 10 min → 30 min due to Iceberg metadata accumulation per ba
 **Plan (in priority order):**
 1. **Single bootstrap job** — Process all 251 files in ONE EMR job instead of 17.
    Spark queues 3,012 tasks internally, runs 4 at a time. ~45-90 min vs 170-510 min.
-   Change: Remove shell loop in `0_batch_pipeline.sh` for bootstrap mode.
+   Change: Remove shell loop in `0_aws_pipeline_run.sh` for bootstrap mode.
 2. **Iceberg write tuning** — Add table properties to reduce file/metadata bloat:
    - `write.target-file-size-bytes = 536870912` (512MB files)
    - `write.distribution-mode = hash`
@@ -87,8 +87,10 @@ Job time grew from 10 min → 30 min due to Iceberg metadata accumulation per ba
 
 ## Key Files
 **Top-level entry points:**
-- `0_batch_pipeline.sh` - Data loading orchestrator (landing → bronze → silver)
-- `1_strategy_run.sh` - Strategy execution entry point
+- `0_aws_pipeline_run.sh` - Data loading orchestrator for AWS (landing → bronze → silver)
+- `0_local_pipeline_run.sh` - Data loading orchestrator for local dev (same flow, local filesystem)
+- `1_aws_strategy_run.sh` - Strategy execution entry point (AWS)
+- `1_local_strategy_run.sh` - Strategy execution entry point (local dev)
 - `tests/regression_strategy.sh` - Strategy regression (dev + aws)
 - `tests/regression_dataload.sh` - Dataload regression (dev + aws)
 

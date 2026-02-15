@@ -1,5 +1,5 @@
 #!/bin/bash
-# 1_strategy_run.sh - Strategy SIT On-Demand Testing (Approach 1: S3-based)
+# 1_aws_strategy_run.sh - AWS Strategy Runner (Approach 1: S3-based)
 #
 # Approach 1 workflow:
 #   - Source code is zipped & uploaded to S3 (fast, ~seconds)
@@ -7,8 +7,8 @@
 #   - deploy_and_submit.sh handles: zip → S3 upload → EMR job submit
 #
 # Usage:
-#   ./1_strategy_run.sh                    # Run all active strategies
-#   ./1_strategy_run.sh --strategies IronCondorStrategy IronButterflyStrategy
+#   ./1_aws_strategy_run.sh                    # Run all active strategies
+#   ./1_aws_strategy_run.sh --strategies IronCondorStrategy IronButterflyStrategy
 
 # Pass all arguments through (e.g., --strategies)
 ./infrastructure/deploy_and_submit.sh "strategy" "$@"

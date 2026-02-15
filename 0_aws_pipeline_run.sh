@@ -1,5 +1,5 @@
 #!/bin/bash
-# 0_batch_pipeline.sh - Master Production Orchestrator (Approach 1: S3-based)
+# 0_aws_pipeline_run.sh - AWS Production Orchestrator (Approach 1: S3-based)
 #
 # Docker image is NOT rebuilt here — it only contains pip dependencies.
 # Source code is zipped & uploaded to S3 on every job submission automatically.

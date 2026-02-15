@@ -148,13 +148,13 @@ Loads CSV files through **Landing → Bronze → Silver**.
 
 | Action                                           | Dev (local) | AWS |
 |--------------------------------------------------|---|---|
-| `First-time load** (create tables from scratch)` | `ENV=dev uv run python src/main.py --mode dataload --bootstrap` | `./0_batch_pipeline.sh` |
+| `First-time load (create tables from scratch)`   | `./0_local_pipeline_run.sh` | `./0_aws_pipeline_run.sh` |
 | `Daily incremental load (append new data)`       | `ENV=dev uv run python src/main.py --mode dataload` | `./infrastructure/deploy_and_submit.sh daily` |
 | `Regression test`                                | `./tests/regression_dataload.sh dev` | `./tests/regression_dataload.sh aws` |
 | `Regression test (both envs)`                    | `./tests/regression_dataload.sh` | |
 | `Regression + rebuild Docker image`              | `./tests/regression_dataload.sh --rebuild` | |
 
-> **Dev note**: In dev mode, CSVs are read from `data/raw/staging/`. The batch script (`0_batch_pipeline.sh`) is AWS-only — it orchestrates S3 file movement between landing/staging/processed zones.
+> **Dev note**: Place CSV files in `data/raw/landing/`. The local script (`0_local_pipeline_run.sh`) handles the full `landing → staging → processed` lifecycle — just like `0_aws_pipeline_run.sh` does on AWS with S3.
 
 ### 2. Strategy
 
@@ -162,8 +162,8 @@ Reads Silver tables and generates trading signals into **Gold**.
 
 | Action                              | Dev (local) | AWS |
 |-------------------------------------|---|---|
-| `Run all active strategies`         | `ENV=dev uv run python src/main.py --mode strategy` | `./1_strategy_run.sh` |
-| `Run a specific strategy`           | `ENV=dev uv run python src/main.py --mode strategy --strategies LaymanSPYStrategy` | `./1_strategy_run.sh --strategies LaymanSPYStrategy` |
+| `Run all active strategies`         | `./1_local_strategy_run.sh` | `./1_aws_strategy_run.sh` |
+| `Run a specific strategy`           | `./1_local_strategy_run.sh --strategies LaymanSPYStrategy` | `./1_aws_strategy_run.sh --strategies LaymanSPYStrategy` |
 | `Regression test`                   | `./tests/regression_strategy.sh dev` | `./tests/regression_strategy.sh aws` |
 | `Regression test (both envs)`       | `./tests/regression_strategy.sh` | |
 | `Regression + rebuild Docker image` | `./tests/regression_strategy.sh --rebuild` | |
@@ -175,11 +175,11 @@ Reads Silver tables and generates trading signals into **Gold**.
 #### Data Loading
 
 ```bash
-# First-time load (AWS) — loads all CSVs from S3 landing zone
-./0_batch_pipeline.sh
+# First-time load (local) — moves CSVs from landing/ → staging/ → processed/
+./0_local_pipeline_run.sh
 
-# First-time load (local) — create local tables from CSVs in data/raw/staging/
-ENV=dev uv run python src/main.py --mode dataload --bootstrap
+# First-time load (AWS) — loads all CSVs from S3 landing zone
+./0_aws_pipeline_run.sh
 
 # Dependency change — rebuild Docker image + run full dataload regression
 ./tests/regression_dataload.sh --rebuild
@@ -189,11 +189,11 @@ ENV=dev uv run python src/main.py --mode dataload --bootstrap
 
 ```bash
 # Day-to-day: code change → quick local check → deploy to AWS
-./tests/regression_strategy.sh dev        # ~30s local sanity check
-./1_strategy_run.sh                       # deploy to AWS
+./1_local_strategy_run.sh                 # run locally (~30s)
+./1_aws_strategy_run.sh                   # deploy to AWS
 
-# Run strategies locally
-ENV=dev uv run python src/main.py --mode strategy
+# Run a specific strategy locally
+./1_local_strategy_run.sh --strategies LaymanSPYStrategy
 
 # Dependency change — rebuild Docker image + run full strategy regression
 ./tests/regression_strategy.sh --rebuild
@@ -205,8 +205,10 @@ ENV=dev uv run python src/main.py --mode strategy
 
 ```
 trading_pipeline/
-├── 0_batch_pipeline.sh              # Entry point: data loading (landing → bronze → silver)
-├── 1_strategy_run.sh                # Entry point: strategy execution (silver → gold)
+├── 0_aws_pipeline_run.sh            # Entry point: AWS data loading (landing → bronze → silver)
+├── 0_local_pipeline_run.sh          # Entry point: local dev data loading (same flow, local filesystem)
+├── 1_aws_strategy_run.sh            # Entry point: AWS strategy execution (silver → gold)
+├── 1_local_strategy_run.sh          # Entry point: local dev strategy execution
 ├── config.yaml                      # All pipeline configuration
 ├── Dockerfile                       # Custom EMR image (Python 3.12 + pip deps)
 ├── pyproject.toml                   # Python dependencies
@@ -335,7 +337,7 @@ strategies:
     active: "Y"
     underlying: "SPY"
 ```
-4. Run: `./1_strategy_run.sh`
+4. Run: `./1_aws_strategy_run.sh`
 
 The orchestrator will create a Gold table named `gold_mystrategy` automatically.
 

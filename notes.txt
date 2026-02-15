@@ -1,6 +1,6 @@
 ## Capture Codebase Snapshot
 1. Capture specific root files
-for f in 0_batch_pipeline.sh 1_strategy_run.sh config.yaml Dockerfile README.md requirements.txt; do
+for f in 0_aws_pipeline_run.sh 0_local_pipeline_run.sh 1_aws_strategy_run.sh 1_local_strategy_run.sh config.yaml Dockerfile README.md requirements.txt; do
     [ -f "$f" ] && echo "--- FILE: ./$f ---" && cat "$f"
 done > codebase_snapshot.txt
 
