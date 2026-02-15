@@ -21,14 +21,16 @@ def initialize_config():
     spark = SparkSessionBuilder.create()
     return config, spark, args.bootstrap, args.mode, args.strategies
 
-def orchestrate(config, spark, mode, bootstrap_mode):
+def orchestrate(config, spark, mode, bootstrap_mode, strategy_names=None):
     if mode == 'dataload':
+        logger.info(f"🚀 Launching Data Load (Bootstrap: {bootstrap_mode})")
         orchestrator = DataLoadOrchestrator(config, spark)
         orchestrator.run(is_bootstrap=bootstrap_mode)
 
     elif mode == 'strategy':
+        logger.info("🎯 Launching Strategy SIT")
         orchestrator = StrategyOrchestrator(config, spark)
-        orchestrator.run(strategy_names=strategies)
+        orchestrator.run(strategy_names=strategy_names)
 
 def verify_gold_layer(spark) -> None:
     # Check the final Gold signals
@@ -44,8 +46,8 @@ def clean_up(spark) -> None:
     spark.stop()
 
 def main():
-    config, spark, bootstrap, mode, strategies = initialize_config()
-    orchestrate(config, spark, mode, bootstrap)
+    config, spark, bootstrap, mode, strategy_names = initialize_config()
+    orchestrate(config, spark, mode, bootstrap, strategy_names)
     verify_gold_layer(spark)
     clean_up(spark)
 

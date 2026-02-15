@@ -1,22 +1,22 @@
-SUBMIT_PARAMS="--conf spark.app.is_bootstrap=${IS_BOOTSTRAP} "
-SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.ENV=prod "
-SUBMIT_PARAMS+="--conf spark.executorEnv.ENV=prod "
-SUBMIT_PARAMS+="--conf spark.yarn.appMasterEnv.ENV=prod "
-SUBMIT_PARAMS+="--py-files s3://${S3_BUCKET}/artifacts/src.zip "
-SUBMIT_PARAMS+="--files s3://${S3_BUCKET}/artifacts/config.yaml "
-SUBMIT_PARAMS+="--archives s3://${S3_BUCKET}/artifacts/pyspark_deps.tar.gz#environment "
-SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=./environment/bin/python "
-SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=./environment/bin/python "
-SUBMIT_PARAMS+="--conf spark.executorEnv.PYSPARK_PYTHON=./environment/bin/python "
+#!/bin/bash
+# infrastructure/.spark_config - Single Source of Truth for EMR Tuning
+
+SUBMIT_PARAMS="--conf spark.app.is_bootstrap=${IS_BOOTSTRAP:-false} "
+SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=/usr/bin/python3.12 "
+SUBMIT_PARAMS+="--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=/usr/bin/python3.12 "
+SUBMIT_PARAMS+="--conf spark.executorEnv.PYSPARK_PYTHON=/usr/bin/python3.12 "
+SUBMIT_PARAMS+="--py-files s3://trading-pipeline/artifacts/src.zip "
+SUBMIT_PARAMS+="--files s3://trading-pipeline/artifacts/config.yaml "
+
+# Resource Scaling
+SUBMIT_PARAMS+="--conf spark.driver.memory=${DRIV_MEM} "
+SUBMIT_PARAMS+="--conf spark.executor.memory=${EXEC_MEM} "
+SUBMIT_PARAMS+="--conf spark.executor.instances=${MAX_EXECS} "
+SUBMIT_PARAMS+="--conf spark.dynamicAllocation.enabled=false "
+SUBMIT_PARAMS+="--conf spark.emr-serverless.executor.disk=100G "
+
+# Catalog Config
 SUBMIT_PARAMS+="--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
 SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog "
 SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog "
 SUBMIT_PARAMS+="--conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO "
-# 1. Force Spark to stop asking for more resources
-SUBMIT_PARAMS+="--conf spark.dynamicAllocation.enabled=false "
-# 2. Hard-cap the instances to exactly what's in the YAML
-SUBMIT_PARAMS+="--conf spark.executor.instances=${MAX_EXECS} "
-# Give executors 100GB to handle the 25-file shuffle
-SUBMIT_PARAMS+="--conf spark.emr-serverless.executor.disk=100G "
-# It's usually a good idea to give the driver a bit more too, though 20G is often fine
-SUBMIT_PARAMS+="--conf spark.emr-serverless.driver.disk=50G "

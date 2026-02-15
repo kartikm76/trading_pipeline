@@ -59,9 +59,9 @@ scaling:
     driver_memory: "16G"
     shuffle_partitions: 1000
   daily:
-    max_executors: 4
-    executor_memory: "16G"
-    driver_memory: "16G"
+    max_executors: 2
+    executor_memory: "8G"
+    driver_memory: "8G"
     shuffle_partitions: 1000
 
 # [UNDERLYING SYMBOL MAPPING]

@@ -32,6 +32,7 @@ class ConfigManager:
     def _load_config(self):
         paths_to_check = [
             Path("config.yaml"),
+            Path("/app/config.yaml"),
             Path("infrastructure/resources/config.yaml"),
             Path("../config.yaml")
         ]

@@ -29,3 +29,22 @@ aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 
 4. Run:
 ./batch_control.sh prod
+
+
+5. Strategy Run -- To Be Continued
+(trading-pipeline) /Users/kartikmakker/Kartik_Workspace/trading_pipeline/infrastructure $ ./strategy_run.sh
+🏠 Project Root identified as: /Users/kartikmakker/Kartik_Workspace/trading_pipeline
+📦 Packaging project...
+⬆️ Syncing artifacts to s3://trading-pipeline/artifacts/ ...
+upload: ../dist/src.zip to s3://trading-pipeline/artifacts/src.zip
+upload: ../config.yaml to s3://trading-pipeline/artifacts/config.yaml
+upload: ../src/main.py to s3://trading-pipeline/artifacts/main.py
+🚀 Triggering EMR Strategy Orchestration for App: 00g35nv23d1lkf09
+{
+    "applicationId": "00g35nv23d1lkf09",
+    "jobRunId": "00g3ap5hcjhoc00b",
+    "arn": "arn:aws:emr-serverless:us-east-1:949934295366:/applications/00g35nv23d1lkf09/jobruns/00g3ap5hcjhoc00b"
+}
+
+colima start --arch aarch64 --vm-type=vz --vz-rosetta
+docker buildx build   --platform linux/amd64,linux/arm64   -t 949934295366.dkr.ecr.us-east-1.amazonaws.com/trading-pipeline:latest   --push .
