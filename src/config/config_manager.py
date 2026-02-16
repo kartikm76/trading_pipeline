@@ -78,6 +78,9 @@ class ConfigManager:
 
     @property
     def db_name(self) -> str:
+        # Use test database for test environment
+        if self._env == 'test':
+            return self.get('storage.test_db_name', 'trading_db_test')
         return self.get('storage.db_name')
 
     @property
