@@ -7,8 +7,7 @@ data_format:
 
 storage:
   catalog_name: "glue_catalog"
-  db_name: "trading_db"
-  test_db_name: "trading_db_test"  # Test environment database
+  db_name: "trading_db"  # Default fallback (overridden per environment)
   tables:
     bronze: "bronze_options_chain"
     silver: "enriched_options_silver"
@@ -36,6 +35,7 @@ dev:
   use_location_clause: false
   raw_base_path: "./data/raw" # Local base
   warehouse: "./iceberg-warehouse/"
+  db_name: "trading_db"  # Local dev database
 
 aws:
   catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
@@ -45,6 +45,7 @@ aws:
   format_version: "2"
   warehouse: "s3://trading-pipeline/iceberg-warehouse/"
   raw_base_path: "s3://trading-pipeline/data/raw"
+  db_name: "trading_db"  # Production database
 
 test:
   catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
@@ -54,6 +55,7 @@ test:
   format_version: "2"
   warehouse: "s3://trading-pipeline-test/iceberg-warehouse/"
   raw_base_path: "s3://trading-pipeline-test/data/raw"
+  db_name: "trading_db_test"  # Test environment database
 
 scaling:
   batch_size: 15 # Centralized batch size for the control manager

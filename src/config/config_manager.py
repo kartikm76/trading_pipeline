@@ -78,10 +78,8 @@ class ConfigManager:
 
     @property
     def db_name(self) -> str:
-        # Use test database for test environment
-        if self._env == 'test':
-            return self.get('storage.test_db_name', 'trading_db_test')
-        return self.get('storage.db_name')
+        # Read db_name from environment-specific block, fallback to global storage.db_name
+        return self._get_env_specific('db_name', self.get('storage.db_name'))
 
     @property
     def catalog_impl(self) -> Optional[str]:
