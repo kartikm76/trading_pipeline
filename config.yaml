@@ -73,8 +73,11 @@ scaling:
 # [UNDERLYING SYMBOL MAPPING]
 # Maps option symbols to their tradeable underlying ETF/stock
 underlying_mapping:
-  SPX: "SPY"   # S&P 500 Index → SPDR S&P 500 ETF
-  NDX: "QQQ"   # Nasdaq-100 Index → Invesco QQQ ETF
-  RUT: "IWM"   # Russell 2000 Index → iShares Russell 2000 ETF
-  DJX: "DIA"   # Dow Jones Index → SPDR Dow Jones ETF
-  VIX: "VXX"   # VIX Index → iPath S&P 500 VIX Short-Term Futures ETN
+  SPX: "SPY"    # S&P 500 Index → SPDR S&P 500 ETF
+  SPXW: "SPY"   # S&P 500 Weekly Options → same underlying as SPX
+  NDX: "QQQ"    # Nasdaq-100 Index → Invesco QQQ ETF
+  NDXP: "QQQ"   # Nasdaq-100 PM-settled → same underlying as NDX
+  RUT: "IWM"    # Russell 2000 Index → iShares Russell 2000 ETF
+  RUTW: "IWM"   # Russell 2000 Weekly → same underlying as RUT
+  DJX: "DIA"    # Dow Jones Index → SPDR Dow Jones ETF
+  VIX: "VXX"    # VIX Index → iPath S&P 500 VIX Short-Term Futures ETN
