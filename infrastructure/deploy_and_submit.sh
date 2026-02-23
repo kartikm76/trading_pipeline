@@ -24,9 +24,14 @@ mkdir -p "$DIST_DIR"
   -x '__pycache__/*' '*/__pycache__/*' '.DS_Store' 'codebase_snapshot.txt')
 
 echo "☁️  Uploading artifacts to S3..."
-aws s3 cp "$DIST_DIR/src.zip" s3://trading-pipeline/artifacts/src.zip --quiet
-aws s3 cp "$PROJECT_ROOT/src/main.py" s3://trading-pipeline/artifacts/main.py --quiet
-aws s3 cp "$PROJECT_ROOT/config.yaml" s3://trading-pipeline/artifacts/config.yaml --quiet
+# Extract S3 bucket from config.yaml based on ENV variable
+ENV=${ENV:-aws}
+WAREHOUSE=$(get_val "['$ENV']['warehouse']")
+S3_BUCKET=$(echo $WAREHOUSE | sed 's|s3://||' | sed 's|/.*||')
+echo "   Environment: $ENV | S3 Bucket: $S3_BUCKET"
+aws s3 cp "$DIST_DIR/src.zip" "s3://$S3_BUCKET/artifacts/src.zip" --quiet
+aws s3 cp "$PROJECT_ROOT/src/main.py" "s3://$S3_BUCKET/artifacts/main.py" --quiet
+aws s3 cp "$PROJECT_ROOT/config.yaml" "s3://$S3_BUCKET/artifacts/config.yaml" --quiet
 echo "✅ Artifacts uploaded"
 
 # ── Step 2: Determine run type & scaling ──

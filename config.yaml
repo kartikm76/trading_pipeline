@@ -7,7 +7,7 @@ data_format:
 
 storage:
   catalog_name: "glue_catalog"
-  db_name: "trading_db"
+  db_name: "trading_db"  # Default fallback (overridden per environment)
   tables:
     bronze: "bronze_options_chain"
     silver: "enriched_options_silver"
@@ -16,13 +16,13 @@ storage:
 # [STRATEGY SWITCHBOARD]
 strategies:
   - class: "LaymanSPYStrategy"
-    active: "Y"
+    active: "N"
     underlying: "SPY"
   - class: "LaymanQQQStrategy"
     active: "N"
     underlying: "QQQ"
   - class: "IronCondorStrategy"  # Added and set to active
-    active: "N"
+    active: "Y"
     underlying: "SPY"
 
 filters:
@@ -35,6 +35,7 @@ dev:
   use_location_clause: false
   raw_base_path: "./data/raw" # Local base
   warehouse: "./iceberg-warehouse/"
+  db_name: "trading_db"  # Local dev database
 
 aws:
   catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
@@ -44,6 +45,17 @@ aws:
   format_version: "2"
   warehouse: "s3://trading-pipeline/iceberg-warehouse/"
   raw_base_path: "s3://trading-pipeline/data/raw"
+  db_name: "trading_db"  # Production database
+
+test:
+  catalog_impl: "org.apache.iceberg.aws.glue.GlueCatalog"
+  io_impl: "org.apache.iceberg.aws.s3.S3FileIO"
+  use_location_clause: true
+  write_mode: "merge-on-read"
+  format_version: "2"
+  warehouse: "s3://trading-pipeline-test/iceberg-warehouse/"
+  raw_base_path: "s3://trading-pipeline-test/data/raw"
+  db_name: "trading_db_test"  # Test environment database
 
 scaling:
   batch_size: 15 # Centralized batch size for the control manager
@@ -61,8 +73,11 @@ scaling:
 # [UNDERLYING SYMBOL MAPPING]
 # Maps option symbols to their tradeable underlying ETF/stock
 underlying_mapping:
-  SPX: "SPY"   # S&P 500 Index → SPDR S&P 500 ETF
-  NDX: "QQQ"   # Nasdaq-100 Index → Invesco QQQ ETF
-  RUT: "IWM"   # Russell 2000 Index → iShares Russell 2000 ETF
-  DJX: "DIA"   # Dow Jones Index → SPDR Dow Jones ETF
-  VIX: "VXX"   # VIX Index → iPath S&P 500 VIX Short-Term Futures ETN
+  SPX: "SPY"    # S&P 500 Index → SPDR S&P 500 ETF
+  SPXW: "SPY"   # S&P 500 Weekly Options → same underlying as SPX
+  NDX: "QQQ"    # Nasdaq-100 Index → Invesco QQQ ETF
+  NDXP: "QQQ"   # Nasdaq-100 PM-settled → same underlying as NDX
+  RUT: "IWM"    # Russell 2000 Index → iShares Russell 2000 ETF
+  RUTW: "IWM"   # Russell 2000 Weekly → same underlying as RUT
+  DJX: "DIA"    # Dow Jones Index → SPDR Dow Jones ETF
+  VIX: "VXX"    # VIX Index → iPath S&P 500 VIX Short-Term Futures ETN
