@@ -63,7 +63,7 @@ class StrategyOrchestrator:
 
         cutoff_date = (max_date - timedelta(days=strategy.lookback_days)).strftime("%Y-%m-%d")
         silver_df = full_silver.filter(F.col("trade_date") >= cutoff_date)
-        logger.info(f"📊 {name}: lookback={strategy.lookback_days} days, max_date={max_date}, cutoff={cutoff_date}")
+        logger.info(f"📊 {name}: lookback={strategy.lookback_days} days, max_date={max_date}, cutoff={cutoff_date}, silver_rows={silver_df.count()}")
 
         # 3. Distributed processing on EMR (Spark -> Polars -> Spark)
         gold_df = strategy.generate_signals(silver_df)

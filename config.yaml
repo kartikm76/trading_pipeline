@@ -16,13 +16,13 @@ storage:
 # [STRATEGY SWITCHBOARD]
 strategies:
   - class: "LaymanSPYStrategy"
-    active: "Y"
+    active: "N"
     underlying: "SPY"
   - class: "LaymanQQQStrategy"
     active: "N"
     underlying: "QQQ"
   - class: "IronCondorStrategy"  # Added and set to active
-    active: "N"
+    active: "Y"
     underlying: "SPY"
 
 filters:
