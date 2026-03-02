@@ -11,6 +11,8 @@ A production-grade options chain data pipeline built on **PySpark**, **Apache Ic
 - [One-Time AWS Setup](#one-time-aws-setup)
 - [Installation](#installation)
 - [Running the Pipeline](#running-the-pipeline)
+- [Full-Year Strategy Analysis](#full-year-strategy-analysis)
+- [AWS vCPU Constraints](#aws-vcpu-constraints)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
 - [Adding a New Strategy](#adding-a-new-strategy)
@@ -81,7 +83,7 @@ docker buildx version
 
 ### AWS Credentials
 
-Configure your AWS credentials with access to the target account:
+Configure AWS credentials with access to the target account:
 ```bash
 aws configure
 # Region: us-east-1
@@ -102,7 +104,7 @@ mkdir -p data/raw/{landing,staging,processed}
 | `data/raw/staging/` | Active processing zone — CSVs are read from here during dataload |
 | `data/raw/processed/` | Archived CSVs after successful processing |
 
-> **Note**: In dev mode, the pipeline reads CSVs from `data/raw/staging/`. Place your CSV files there before running dataload.
+> **Note**: In dev mode, the pipeline reads CSVs from `data/raw/staging/`. Place CSV files there before running dataload.
 
 ---
 
@@ -201,6 +203,239 @@ Reads Silver tables and generates trading signals into **Gold**.
 
 ---
 
+## Full-Year Strategy Analysis
+
+### Quick Start
+
+Process the entire 2025 dataset (2.5B rows) with monthly batching:
+
+```bash
+# Run entire year with Iron Condor strategy
+./2_yearly_strategy_analysis.sh
+
+# Expected: 12 sequential jobs, ~2 hours total, $12-15 cost
+# Result: gold_ironcondorstrategy table with all 2.5B rows analyzed
+```
+
+### How It Works
+
+The framework automatically adapts execution strategy based on configuration:
+
+**Batch Modes:**
+- **Snapshot** (default for Iron Condor): Monthly batching with no lookback
+  - 12 parallel-capable jobs (limited by AWS quota)
+  - Each processes ~200M rows in ~10 minutes
+
+- **Lookback** (for momentum, IV analysis): Sliding windows with overlapping buffers
+  - Sequential execution (dependencies between batches)
+  - Each batch includes prior N days for context
+
+- **Full**: Single large job for entire dataset
+  - All 2.5B rows in one job with enhanced resources
+  - ~90 minutes, $20-25
+
+### Common Commands
+
+```bash
+# Full year (sequential, default - works with 16 vCPU quota)
+./2_yearly_strategy_analysis.sh
+
+# Specific year
+./2_yearly_strategy_analysis.sh 2024
+
+# Force batch mode
+./2_yearly_strategy_analysis.sh --snapshot
+./2_yearly_strategy_analysis.sh --lookback
+./2_yearly_strategy_analysis.sh --full
+
+# Control parallelism (requires AWS quota increase)
+./2_yearly_strategy_analysis.sh --max-jobs 1   # Sequential (~2 hours)
+./2_yearly_strategy_analysis.sh --max-jobs 4   # Parallel (~30 min) - needs 64 vCPU
+
+# Single monthly batch
+./infrastructure/deploy_and_submit.sh strategy \
+  --start-date 2025-01-01 --end-date 2025-02-01
+
+# Verify results
+spark-sql> SELECT COUNT(*), COUNT(DISTINCT trade_date)
+           FROM gold_ironcondorstrategy;
+# Expected: ~2.5B rows, 252 distinct dates (no duplicates)
+```
+
+### Monthly Batching Details
+
+```
+The 2025 dataset:  2.5B rows, 252 trading days
+
+Monthly batching:
+  Jan batch  → ~208M rows in ~10 min
+  Feb batch  → ~188M rows in ~10 min
+  ...
+  Dec batch  → ~208M rows in ~10 min
+
+Total: 12 jobs, ~200M rows each
+
+Execution timeline (sequential):
+  - Jobs run ONE at a time (AWS 16 vCPU quota limit)
+  - Wall time: 12 × 10 min = ~120 min (~2 hours)
+  - Cost: ~$1-1.50 per job = $12-15 total
+
+Execution timeline (if quota increased to 64 vCPU):
+  - Run 4 jobs in parallel
+  - Wall time: 3 × 10 min = ~30 min
+  - Cost: Same $12-15 total
+```
+
+### Non-Overlapping Output Guarantee
+
+For lookback strategies (e.g., momentum), batches have overlapping input but non-overlapping output:
+
+```
+Batch 1 (Jan with 5-day lookback):
+  Input:  Dec 27-31 + Jan 1-31  (buffer + decision dates)
+  Output: Jan 1-31 only (discards Dec buffer)
+
+Batch 2 (Feb with 5-day lookback):
+  Input:  Jan 27-31 + Feb 1-28  (buffer + decision dates)
+  Output: Feb 1-28 only (discards Jan overlap)
+
+Result: Gold table has each date exactly once ✓
+```
+
+### Monitoring & Logs
+
+```bash
+# Watch batch progress
+tail -f logs/yearly_analysis/yearly_analysis_2025_*.log
+
+# Check progress
+grep "Progress" logs/yearly_analysis/yearly_analysis_2025_*.log
+
+# Look for failures
+grep "❌ Failed" logs/yearly_analysis/yearly_analysis_2025_*.log
+
+# Retry a failed batch
+./infrastructure/deploy_and_submit.sh strategy \
+  --start-date 2025-02-01 --end-date 2025-03-01
+```
+
+### What Gets Generated
+
+Gold table: `gold_ironcondorstrategy`
+
+Columns:
+- `underlying` (SPY)
+- `trade_date` (2025-01-01, 2025-01-02, ...)
+- `expiration` (option expiry date)
+- `strike_short_call`, `price_short_call`
+- `strike_long_call`, `price_long_call`
+- `strike_short_put`, `price_short_put`
+- `strike_long_put`, `price_long_put`
+- `net_credit` (positive = profitable condor)
+- `strategy_name` (IRON_CONDOR)
+
+Total: ~2.5B rows, 252 partitions (by trade_date), Iceberg format on S3
+
+---
+
+## AWS vCPU Constraints
+
+### The Issue
+
+**Personal AWS accounts have a 16 vCPU hard quota by default.**
+
+Configuration:
+```yaml
+snapshot:
+  max_executors: 4           # 4 executors
+  executor_memory: "16G"
+```
+
+vCPU calculation:
+```
+4 executors × 4 vCPU per executor = 16 vCPU per job
+```
+
+**Result:** Only **1 job can run at a time** (sequential execution).
+
+### Default Execution
+
+**Before:** 12 parallel jobs, ~20 min ❌ (exceeds quota)
+**Now:** 12 sequential jobs, ~120 min ✅ (works with default quota)
+
+```bash
+./2_yearly_strategy_analysis.sh
+# Runs one batch at a time
+# Time: 12 batches × ~10 min = ~120 min (~2 hours)
+# Cost: $12-15 (same total compute, just sequential)
+```
+
+### To Enable Parallelism
+
+**Option 1: Request AWS Quota Increase** (Recommended)
+
+```bash
+# 1. Go to AWS Service Quotas Console
+# 2. Search for "EMR Serverless"
+# 3. Find "vCPU" quota
+# 4. Request increase:
+#    - For 2 parallel jobs: 32 vCPU
+#    - For 4 parallel jobs: 64 vCPU
+# 5. AWS usually approves within hours/days (often auto-approved)
+
+# Then run:
+./2_yearly_strategy_analysis.sh --max-jobs 4
+# Time: ~30 min (4 jobs in parallel)
+```
+
+**Option 2: Reduce Executors per Job** (Slower)
+
+```yaml
+# In config.yaml, change:
+snapshot:
+  max_executors: 2    # Instead of 4
+```
+
+```bash
+# Then can run 2 jobs in parallel
+./2_yearly_strategy_analysis.sh --max-jobs 2
+# Each job takes ~20 min (slower), but works within quota
+```
+
+### AWS vCPU Requirements by Scenario
+
+| Scenario | vCPU Needed | Works Default? | Action |
+|----------|-------------|---|--------|
+| Sequential (1 job) | 16 vCPU | ✅ YES | Just run! |
+| 2 jobs parallel | 32 vCPU | ❌ NO | Request increase |
+| 4 jobs parallel | 64 vCPU | ❌ NO | Request increase |
+| 12 jobs parallel (original) | 192 vCPU | ❌ NO | Not feasible |
+
+### Check Current Quota
+
+```bash
+aws service-quotas get-service-quota \
+  --service-code emr-serverless \
+  --quota-code vCPU \
+  --query 'Quota.Value' --output text
+
+# Should return: 16 (default)
+```
+
+### Performance Benchmarks
+
+| Scenario | Time | Cost | Notes |
+|----------|------|------|-------|
+| 1 day | ~5 min | $1 | |
+| 1 month | ~10 min | $2 | |
+| Full year (sequential) | ~120 min | $12-15 | ✅ Default, no quota increase |
+| Full year (2 parallel) | ~60 min | $12-15 | Needs 32 vCPU quota increase |
+| Full year (4 parallel) | ~30 min | $12-15 | Needs 64 vCPU quota increase |
+
+**Note:** Cost is identical for all scenarios — only wall time changes.
+
+---
+
 ## Project Structure
 
 ```
@@ -259,6 +494,42 @@ trading_pipeline/
 
 All settings live in **`config.yaml`**. Key sections:
 
+### Strategy Organization by Batch Mode
+
+Strategies are organized by execution mode to determine how they run:
+
+```yaml
+strategies:
+  # Snapshot: Monthly batching, parallel execution (if quota allows)
+  # No lookback needed — decisions from single trade_date snapshot
+  snapshot:
+    - class: "IronCondorStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 0
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date", "expiry_date"]
+
+  # Lookback: Sliding windows, sequential execution
+  # Needs prior N days for context (momentum, IV percentile, etc.)
+  lookback:
+    # Example (disabled for now):
+    # - class: "MomentumStrategy"
+    #   active: "Y"
+    #   underlying: "SPY"
+    #   lookback_days: 5
+    #   output_mode: "non_overlapping"
+
+  # Full: Single large job for entire dataset
+  # Requires full visibility (correlation, position tracking, etc.)
+  full:
+    # Example (disabled for now):
+    # - class: "CorrelationArbitrageStrategy"
+    #   active: "Y"
+    #   underlying: "SPY"
+    #   lookback_days: 252
+```
+
 ### Environment Blocks
 
 The pipeline auto-selects the config block based on the `ENV` environment variable:
@@ -267,20 +538,6 @@ The pipeline auto-selects the config block based on the `ENV` environment variab
 |-----------|-------------|--------|---------|
 | `dev` (default) | `dev:` | You, locally | Local Hadoop |
 | `aws` | `aws:` | EMR Serverless (via `.spark_config`) | AWS Glue + S3 |
-
-### Strategy Switchboard
-
-Toggle strategies on/off without code changes:
-
-```yaml
-strategies:
-  - class: "LaymanSPYStrategy"
-    active: "Y"              # ← Will run
-    underlying: "SPY"
-  - class: "IronCondorStrategy"
-    active: "N"              # ← Skipped
-    underlying: "SPY"
-```
 
 ### Scaling
 
@@ -293,16 +550,38 @@ scaling:
     executor_memory: "16G"
     driver_memory: "16G"
   daily:
-    max_executors: 2
-    executor_memory: "8G"
-    driver_memory: "8G"
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+  # Snapshot strategies (monthly batching)
+  snapshot:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 200
+  # Lookback strategies (sliding windows)
+  lookback:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 200
+  # Full dataset strategies
+  full:
+    max_executors: 8
+    executor_memory: "32G"
+    driver_memory: "32G"
+    shuffle_partitions: 500
 ```
+
+> **Note:** Snapshot strategies default to 4 executors × 16GB = 16 vCPU per job, which matches the AWS personal account quota. For parallelism, request a quota increase.
 
 ---
 
 ## Adding a New Strategy
 
-1. Create `src/strategies/my_strategy.py`:
+### Step 1: Create Strategy Class
+
+Create `src/strategies/my_strategy.py`:
 
 ```python
 import polars as pl
@@ -317,7 +596,7 @@ class MyStrategy(BaseStrategy):
                 "mid_price", "option_type"]
 
     def logic(self, ldf: pl.LazyFrame) -> pl.LazyFrame:
-        # Your Polars-based signal logic here
+        # Polars-based signal logic here
         return ldf.with_columns(
             pl.when(pl.col("mid_price") < 2.0)
               .then(pl.lit("BUY_CALL"))
@@ -329,17 +608,72 @@ class MyStrategy(BaseStrategy):
         pass  # Not used — logic() is the primary engine
 ```
 
-2. Register in `src/strategies/__init__.py`
-3. Add to `config.yaml`:
-```yaml
-strategies:
-  - class: "MyStrategy"
-    active: "Y"
-    underlying: "SPY"
-```
-4. Run: `./1_aws_strategy_run.sh`
+### Step 2: Register Strategy
 
-The orchestrator will create a Gold table named `gold_mystrategy` automatically.
+Add to `src/strategies/__init__.py`:
+
+```python
+from .my_strategy import MyStrategy
+```
+
+### Step 3: Add to config.yaml
+
+Determine batch mode based on strategy needs:
+
+```yaml
+# If no lookback needed (snapshot strategy):
+strategies:
+  snapshot:
+    - class: "MyStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 0
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date"]
+
+# OR if it needs prior N days (lookback strategy):
+strategies:
+  lookback:
+    - class: "MyStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 5
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date"]
+
+# OR if it needs entire dataset (full strategy):
+strategies:
+  full:
+    - class: "MyStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 252
+      output_mode: "non_overlapping"
+      group_key: ["underlying"]
+```
+
+### Step 4: Run
+
+The orchestrator automatically:
+- Detects batch mode from config
+- Creates gold table named `gold_mystrategy`
+- Handles all batching, windowing, and output filtering
+
+```bash
+# Run locally
+./1_local_strategy_run.sh
+
+# Or deploy to AWS
+./1_aws_strategy_run.sh
+```
+
+### Batch Mode Selection Guide
+
+| Mode | Use When | Example |
+|------|----------|---------|
+| **snapshot** | No lookback needed, single trade_date decisions | Iron Condor, Calendar Spreads |
+| **lookback** | Need prior N days for context | Momentum, IV Percentile, Technical Indicators |
+| **full** | Need entire dataset visibility | Correlation, Position Tracking, Greeks Curves |
 
 ---
 

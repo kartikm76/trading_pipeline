@@ -128,9 +128,21 @@ class ConfigManager:
     # --- STRATEGIES & FILTERS (Fixed for StrategyFactory) ---
     @property
     def active_strategy_info(self) -> List[dict]:
-        """Returns a list of active strategies so Factory can access index [0]."""
-        strategies = self.get('strategies', [])
-        return [s for s in strategies if s.get('active') == 'Y']
+        """
+        Returns a list of active strategies from all batch modes.
+        Flattens snapshot/lookback/full modes into single list.
+        """
+        strategies_dict = self.get('strategies', {})
+        all_strategies = []
+
+        # Flatten strategies from all batch modes (snapshot, lookback, full)
+        for mode in ['snapshot', 'lookback', 'full']:
+            mode_strategies = strategies_dict.get(mode, [])
+            if isinstance(mode_strategies, list):
+                all_strategies.extend(mode_strategies)
+
+        # Filter for active strategies (with type check)
+        return [s for s in all_strategies if isinstance(s, dict) and s.get('active') == 'Y']
 
     @property
     def underlying_mapping(self) -> dict:

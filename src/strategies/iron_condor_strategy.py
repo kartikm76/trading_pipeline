@@ -103,13 +103,15 @@ class IronCondorStrategy(BaseStrategy):
                 .over(GROUP_KEY)
         )
 
-        s_c = calls_ranked.filter(pl.col("strike_rank") == 1).select([
+        # 2nd highest = short call
+        s_c = calls_ranked.filter(pl.col("strike_rank") == 2).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_short_call"),
             pl.col("mid_price").alias("price_short_call"),
         ])
 
-        l_c = calls_ranked.filter(pl.col("strike_rank") == 2).select([
+        # highest = long call
+        l_c = calls_ranked.filter(pl.col("strike_rank") == 1).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_long_call"),
             pl.col("mid_price").alias("price_long_call"),
@@ -122,13 +124,15 @@ class IronCondorStrategy(BaseStrategy):
                 .over(GROUP_KEY)
         )
 
-        s_p = puts_ranked.filter(pl.col("strike_rank") == 1).select([
+        # 2nd lowest = short put
+        s_p = puts_ranked.filter(pl.col("strike_rank") == 2).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_short_put"),
             pl.col("mid_price").alias("price_short_put"),
         ])
 
-        l_p = puts_ranked.filter(pl.col("strike_rank") == 2).select([
+        # lowest = long put
+        l_p = puts_ranked.filter(pl.col("strike_rank") == 1).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_long_put"),
             pl.col("mid_price").alias("price_long_put"),

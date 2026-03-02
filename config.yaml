@@ -14,16 +14,64 @@ storage:
     gold: "strategy_signals"
 
 # [STRATEGY SWITCHBOARD]
+# Strategies are organized by batch_mode to determine execution strategy:
+#   - snapshot: Monthly batching (parallel) — no lookback needed
+#   - lookback: Sliding windows (sequential) — needs prior N days for context
+#   - full: Single large job (all 2.5B rows) — needs entire dataset
+
 strategies:
-  - class: "LaymanSPYStrategy"
-    active: "N"
-    underlying: "SPY"
-  - class: "LaymanQQQStrategy"
-    active: "N"
-    underlying: "QQQ"
-  - class: "IronCondorStrategy"  # Added and set to active
-    active: "Y"
-    underlying: "SPY"
+
+  # --- SNAPSHOT MODE (Monthly batching, runs in parallel) ---
+  # Strategies that make decisions from a single trade_date snapshot
+  snapshot:
+    - class: "IronCondorStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 0
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date", "expiry_date"]
+
+    # Placeholder for future calendar spreads
+    # - class: "CalendarSpreadStrategy"
+    #   active: "N"
+    #   underlying: "SPY"
+    #   lookback_days: 0
+    #   output_mode: "non_overlapping"
+    #   group_key: ["underlying", "trade_date"]
+
+  # --- LOOKBACK MODE (Sliding windows, runs sequentially) ---
+  # Strategies that need N days of prior data to calculate context (momentum, IV percentile, etc.)
+  # Data batches overlap by lookback_days to ensure complete context for each decision
+  lookback:
+    # Example (disabled for now):
+    # - class: "MomentumStrategy"
+    #   active: "N"
+    #   underlying: "SPY"
+    #   lookback_days: 5
+    #   output_mode: "non_overlapping"
+    #   group_key: ["underlying", "trade_date"]
+    #   window_overlap_days: 5
+
+  # --- FULL MODE (Single job, all 2.5B rows) ---
+  # Strategies that require full dataset visibility (correlation, position tracking, etc.)
+  # Runs as a single large EMR job with increased resources
+  full:
+    # Example (disabled for now):
+    # - class: "CorrelationArbitrageStrategy"
+    #   active: "N"
+    #   underlying: "SPY"
+    #   lookback_days: 252
+    #   output_mode: "non_overlapping"
+    #   group_key: ["underlying"]
+
+  # --- LEGACY (flat structure, kept for backward compatibility) ---
+  legacy:
+    - class: "LaymanSPYStrategy"
+      active: "N"
+      underlying: "SPY"
+    - class: "LaymanQQQStrategy"
+      active: "N"
+      underlying: "QQQ"
 
 filters:
   - class: "ZeroDTEPolicy"
@@ -65,16 +113,35 @@ scaling:
     driver_memory: "16G"
     shuffle_partitions: 1000
   daily:
-    max_executors: 2
-    executor_memory: "8G"
-    driver_memory: "8G"
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
     shuffle_partitions: 1000
+  # Scaling for snapshot strategies (monthly batches)
+  snapshot:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 200
+  # Scaling for lookback strategies (sliding windows)
+  lookback:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 200
+  # Scaling for full dataset analysis (all 2.5B rows)
+  full:
+    max_executors: 8
+    executor_memory: "32G"
+    driver_memory: "32G"
+    shuffle_partitions: 500
 
 # [UNDERLYING SYMBOL MAPPING]
 # Maps option symbols to their tradeable underlying ETF/stock
 underlying_mapping:
-  SPX: "SPY"    # S&P 500 Index → SPDR S&P 500 ETF
-  SPXW: "SPY"   # S&P 500 Weekly Options → same underlying as SPX
+  SPX: "SPX"    # Keep Standard AM-settled indices separate
+  SPXW: "SPXW"  # Keep PM-settled weeklies separate
+  SPY: "SPY"    # Keep the American ETF separate
   NDX: "QQQ"    # Nasdaq-100 Index → Invesco QQQ ETF
   NDXP: "QQQ"   # Nasdaq-100 PM-settled → same underlying as NDX
   RUT: "IWM"    # Russell 2000 Index → iShares Russell 2000 ETF
