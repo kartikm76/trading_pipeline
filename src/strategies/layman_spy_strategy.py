@@ -49,6 +49,7 @@ class LaymanSPYStrategy(BaseStrategy):
         )
 
     def _process_partition(self, pdf_iterator):
+        import pandas as pd
         for pdf in pdf_iterator:
             if pdf.empty:
                 continue
@@ -56,4 +57,12 @@ class LaymanSPYStrategy(BaseStrategy):
             pdf = self.cast_decimals(pdf)
             ldf = pl.from_pandas(pdf).lazy()
             res = self.logic(ldf)
-            yield res.collect().to_pandas()
+            result_pdf = res.collect().to_pandas()
+
+            # Ensure date columns are proper datetime.date objects for Spark schema conversion
+            if "trade_date" in result_pdf.columns:
+                result_pdf["trade_date"] = pd.to_datetime(result_pdf["trade_date"]).dt.date
+            if "expiry_date" in result_pdf.columns:
+                result_pdf["expiry_date"] = pd.to_datetime(result_pdf["expiry_date"]).dt.date
+
+            yield result_pdf

@@ -236,6 +236,7 @@ class IronCondorStrategy(BaseStrategy):
     def _process_partition(self, pdf_iterator):
         import logging
         import pandas as pd
+        import numpy as np
         log = logging.getLogger("IronCondorStrategy.executor")
 
         # Concatenate ALL batches in this partition before processing.
@@ -256,6 +257,13 @@ class IronCondorStrategy(BaseStrategy):
             ldf = pl.from_pandas(full_pdf).lazy()
             res = self.logic(ldf)
             result_pdf = res.collect().to_pandas()
+
+            # Ensure date columns are proper datetime.date objects for Spark schema conversion
+            if "trade_date" in result_pdf.columns:
+                result_pdf["trade_date"] = pd.to_datetime(result_pdf["trade_date"]).dt.date
+            if "expiration" in result_pdf.columns:
+                result_pdf["expiration"] = pd.to_datetime(result_pdf["expiration"]).dt.date
+
             log.info(f"Partition: yielding {len(result_pdf)} iron condor signals")
             yield result_pdf
         except Exception as e:

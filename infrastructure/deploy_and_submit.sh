@@ -1,17 +1,32 @@
 #!/bin/bash
 # infrastructure/deploy_and_submit.sh - Package code, upload to S3, submit EMR job
 #
-# Usage (Data Loading):
-#   ./deploy_and_submit.sh bootstrap   # Submit bootstrap data load job
-#   ./deploy_and_submit.sh daily       # Submit daily data load job
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║                         QUICK COMMAND REFERENCE                            ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
 #
-# Usage (Strategy Execution):
-#   ./deploy_and_submit.sh strategy                                    # Daily strategy
-#   ./deploy_and_submit.sh strategy --start-date 2025-01-01           # Batch from date
-#   ./deploy_and_submit.sh strategy --start-date 2025-01-01 --end-date 2025-02-01  # Batch range
-#   ./deploy_and_submit.sh strategy --snapshot                         # Force snapshot mode
-#   ./deploy_and_submit.sh strategy --lookback                         # Force lookback mode
-#   ./deploy_and_submit.sh strategy --full                             # Force full mode
+# DATA LOADING:
+#   ./deploy_and_submit.sh bootstrap    → Full historical bootstrap
+#   ./deploy_and_submit.sh daily        → Daily incremental load
+#
+# STRATEGY EXECUTION - QUICK START:
+#   ./deploy_and_submit.sh strategy     → Run daily (snapshot mode)
+#
+# STRATEGY EXECUTION - SINGLE MONTH (one-time test):
+#   ./deploy_and_submit.sh strategy --start-date 2025-01-01 \
+#                                   --end-date 2025-02-01 \
+#                                   --clear-existing
+#
+# STRATEGY EXECUTION - SEQUENTIAL MONTHLY (all 12 months):
+#   ./2_yearly_strategy_analysis.sh --year 2025 --max-jobs 1
+#
+# STRATEGY EXECUTION - ADVANCED OPTIONS:
+#   --snapshot          Force snapshot batch mode (Iron Condor)
+#   --lookback          Force lookback batch mode (Momentum, IV Percentile)
+#   --full              Force full dataset mode
+#   --start-date DATE   Begin date (YYYY-MM-DD)
+#   --end-date DATE     End date (YYYY-MM-DD, exclusive)
+#   --clear-existing    Drop gold tables before writing (use for single runs)
 #
 # Note: For Docker image changes, use build_image.sh instead.
 
@@ -81,6 +96,10 @@ elif [ "$RUN_TYPE" == "strategy" ]; then
             --full)
                 PY_ARGS_ARRAY+=("--batch-mode" "full")
                 SCALING_KEY="full"
+                shift
+                ;;
+            --clear-existing)
+                PY_ARGS_ARRAY+=("--clear-existing")
                 shift
                 ;;
             *)

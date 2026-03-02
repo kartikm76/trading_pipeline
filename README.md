@@ -139,300 +139,71 @@ uv sync
 
 ## Running the Pipeline
 
+> **👉 See [PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md) for all commands, parameters, and troubleshooting**
+
 Two environments are available:
 
 - **`dev`** — runs locally with PySpark (fast, no AWS needed)
 - **`aws`** — submits a job to AWS EMR Serverless
 
-### 1. Data Loading
-
-Loads CSV files through **Landing → Bronze → Silver**.
-
-| Action                                           | Dev (local) | AWS |
-|--------------------------------------------------|---|---|
-| `First-time load (create tables from scratch)`   | `./0_local_pipeline_run.sh` | `./0_aws_pipeline_run.sh` |
-| `Daily incremental load (append new data)`       | `ENV=dev uv run python src/main.py --mode dataload` | `./infrastructure/deploy_and_submit.sh daily` |
-| `Regression test`                                | `./tests/regression_dataload.sh dev` | `./tests/regression_dataload.sh aws` |
-| `Regression test (both envs)`                    | `./tests/regression_dataload.sh` | |
-| `Regression + rebuild Docker image`              | `./tests/regression_dataload.sh --rebuild` | |
-
-> **Dev note**: Place CSV files in `data/raw/landing/`. The local script (`0_local_pipeline_run.sh`) handles the full `landing → staging → processed` lifecycle — just like `0_aws_pipeline_run.sh` does on AWS with S3.
-
-### 2. Strategy
-
-Reads Silver tables and generates trading signals into **Gold**.
-
-| Action                              | Dev (local) | AWS |
-|-------------------------------------|---|---|
-| `Run all active strategies`         | `./1_local_strategy_run.sh` | `./1_aws_strategy_run.sh` |
-| `Run a specific strategy`           | `./1_local_strategy_run.sh --strategies LaymanSPYStrategy` | `./1_aws_strategy_run.sh --strategies LaymanSPYStrategy` |
-| `Regression test`                   | `./tests/regression_strategy.sh dev` | `./tests/regression_strategy.sh aws` |
-| `Regression test (both envs)`       | `./tests/regression_strategy.sh` | |
-| `Regression + rebuild Docker image` | `./tests/regression_strategy.sh --rebuild` | |
-
-> **`--strategies` flag**: Bypasses the `active: "Y"` check in `config.yaml`, letting you run any strategy without editing config. Without the flag, only strategies marked `active: "Y"` will run.
-
-### Common Workflows
-
-#### Data Loading
+### Quick Start
 
 ```bash
-# First-time load (local) — moves CSVs from landing/ → staging/ → processed/
-./0_local_pipeline_run.sh
+# Daily strategy run (latest data)
+./infrastructure/deploy_and_submit.sh strategy
 
-# First-time load (AWS) — loads all CSVs from S3 landing zone
-./0_aws_pipeline_run.sh
+# Full year 2025 (all 12 months)
+./2_yearly_strategy_analysis.sh --year 2025
 
-# Dependency change — rebuild Docker image + run full dataload regression
-./tests/regression_dataload.sh --rebuild
+# Single month test
+./infrastructure/deploy_and_submit.sh strategy \
+  --start-date 2025-01-01 --end-date 2025-02-01 --clear-existing
 ```
 
-#### Strategy
-
-```bash
-# Day-to-day: code change → quick local check → deploy to AWS
-./1_local_strategy_run.sh                 # run locally (~30s)
-./1_aws_strategy_run.sh                   # deploy to AWS
-
-# Run a specific strategy locally
-./1_local_strategy_run.sh --strategies LaymanSPYStrategy
-
-# Dependency change — rebuild Docker image + run full strategy regression
-./tests/regression_strategy.sh --rebuild
-```
+For detailed commands, parameters, and troubleshooting → **[PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md)**
 
 ---
 
 ## Full-Year Strategy Analysis
 
-### Quick Start
+> **👉 For commands, parameters, and troubleshooting, see [PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md)**
 
 Process the entire 2025 dataset (2.5B rows) with monthly batching:
 
 ```bash
-# Run entire year with Iron Condor strategy
-./2_yearly_strategy_analysis.sh
-
-# Expected: 12 sequential jobs, ~2 hours total, $12-15 cost
-# Result: gold_ironcondorstrategy table with all 2.5B rows analyzed
+./2_yearly_strategy_analysis.sh --year 2025
+# 12 sequential jobs, ~2 hours, $12-15 total cost
 ```
 
-### How It Works
+**Key points:**
+- Automatically batches by month (~200M rows each, ~10 min per batch)
+- Respects AWS 16 vCPU quota (sequential by default)
+- Non-overlapping output — each trade_date appears exactly once
+- Iceberg partitioned on S3
 
-The framework automatically adapts execution strategy based on configuration:
-
-**Batch Modes:**
-- **Snapshot** (default for Iron Condor): Monthly batching with no lookback
-  - 12 parallel-capable jobs (limited by AWS quota)
-  - Each processes ~200M rows in ~10 minutes
-
-- **Lookback** (for momentum, IV analysis): Sliding windows with overlapping buffers
-  - Sequential execution (dependencies between batches)
-  - Each batch includes prior N days for context
-
-- **Full**: Single large job for entire dataset
-  - All 2.5B rows in one job with enhanced resources
-  - ~90 minutes, $20-25
-
-### Common Commands
-
-```bash
-# Full year (sequential, default - works with 16 vCPU quota)
-./2_yearly_strategy_analysis.sh
-
-# Specific year
-./2_yearly_strategy_analysis.sh 2024
-
-# Force batch mode
-./2_yearly_strategy_analysis.sh --snapshot
-./2_yearly_strategy_analysis.sh --lookback
-./2_yearly_strategy_analysis.sh --full
-
-# Control parallelism (requires AWS quota increase)
-./2_yearly_strategy_analysis.sh --max-jobs 1   # Sequential (~2 hours)
-./2_yearly_strategy_analysis.sh --max-jobs 4   # Parallel (~30 min) - needs 64 vCPU
-
-# Single monthly batch
-./infrastructure/deploy_and_submit.sh strategy \
-  --start-date 2025-01-01 --end-date 2025-02-01
-
-# Verify results
-spark-sql> SELECT COUNT(*), COUNT(DISTINCT trade_date)
-           FROM gold_ironcondorstrategy;
-# Expected: ~2.5B rows, 252 distinct dates (no duplicates)
-```
-
-### Monthly Batching Details
-
-```
-The 2025 dataset:  2.5B rows, 252 trading days
-
-Monthly batching:
-  Jan batch  → ~208M rows in ~10 min
-  Feb batch  → ~188M rows in ~10 min
-  ...
-  Dec batch  → ~208M rows in ~10 min
-
-Total: 12 jobs, ~200M rows each
-
-Execution timeline (sequential):
-  - Jobs run ONE at a time (AWS 16 vCPU quota limit)
-  - Wall time: 12 × 10 min = ~120 min (~2 hours)
-  - Cost: ~$1-1.50 per job = $12-15 total
-
-Execution timeline (if quota increased to 64 vCPU):
-  - Run 4 jobs in parallel
-  - Wall time: 3 × 10 min = ~30 min
-  - Cost: Same $12-15 total
-```
-
-### Non-Overlapping Output Guarantee
-
-For lookback strategies (e.g., momentum), batches have overlapping input but non-overlapping output:
-
-```
-Batch 1 (Jan with 5-day lookback):
-  Input:  Dec 27-31 + Jan 1-31  (buffer + decision dates)
-  Output: Jan 1-31 only (discards Dec buffer)
-
-Batch 2 (Feb with 5-day lookback):
-  Input:  Jan 27-31 + Feb 1-28  (buffer + decision dates)
-  Output: Feb 1-28 only (discards Jan overlap)
-
-Result: Gold table has each date exactly once ✓
-```
-
-### Monitoring & Logs
-
-```bash
-# Watch batch progress
-tail -f logs/yearly_analysis/yearly_analysis_2025_*.log
-
-# Check progress
-grep "Progress" logs/yearly_analysis/yearly_analysis_2025_*.log
-
-# Look for failures
-grep "❌ Failed" logs/yearly_analysis/yearly_analysis_2025_*.log
-
-# Retry a failed batch
-./infrastructure/deploy_and_submit.sh strategy \
-  --start-date 2025-02-01 --end-date 2025-03-01
-```
-
-### What Gets Generated
-
-Gold table: `gold_ironcondorstrategy`
-
-Columns:
-- `underlying` (SPY)
-- `trade_date` (2025-01-01, 2025-01-02, ...)
-- `expiration` (option expiry date)
-- `strike_short_call`, `price_short_call`
-- `strike_long_call`, `price_long_call`
-- `strike_short_put`, `price_short_put`
-- `strike_long_put`, `price_long_put`
-- `net_credit` (positive = profitable condor)
-- `strategy_name` (IRON_CONDOR)
-
-Total: ~2.5B rows, 252 partitions (by trade_date), Iceberg format on S3
+**Result:** `gold_ironcondorstrategy` table (~2.5B rows, 252 trade_dates)
 
 ---
 
 ## AWS vCPU Constraints
 
-### The Issue
+> **👉 For detailed explanation and quota increase procedures, see [PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md)**
 
-**Personal AWS accounts have a 16 vCPU hard quota by default.**
+**Personal AWS accounts have a 16 vCPU quota by default.**
 
-Configuration:
-```yaml
-snapshot:
-  max_executors: 4           # 4 executors
-  executor_memory: "16G"
-```
+With 4 executors × 4 vCPU = 16 vCPU per job, only **1 job runs at a time**.
 
-vCPU calculation:
-```
-4 executors × 4 vCPU per executor = 16 vCPU per job
-```
-
-**Result:** Only **1 job can run at a time** (sequential execution).
-
-### Default Execution
-
-**Before:** 12 parallel jobs, ~20 min ❌ (exceeds quota)
-**Now:** 12 sequential jobs, ~120 min ✅ (works with default quota)
-
+The pipeline respects this by default:
 ```bash
-./2_yearly_strategy_analysis.sh
-# Runs one batch at a time
-# Time: 12 batches × ~10 min = ~120 min (~2 hours)
-# Cost: $12-15 (same total compute, just sequential)
+./2_yearly_strategy_analysis.sh --year 2025
+# Runs 12 batches sequentially (~2 hours, $12-15)
 ```
 
-### To Enable Parallelism
-
-**Option 1: Request AWS Quota Increase** (Recommended)
-
+To parallelize (optional): Request AWS quota increase to 64 vCPU, then:
 ```bash
-# 1. Go to AWS Service Quotas Console
-# 2. Search for "EMR Serverless"
-# 3. Find "vCPU" quota
-# 4. Request increase:
-#    - For 2 parallel jobs: 32 vCPU
-#    - For 4 parallel jobs: 64 vCPU
-# 5. AWS usually approves within hours/days (often auto-approved)
-
-# Then run:
-./2_yearly_strategy_analysis.sh --max-jobs 4
-# Time: ~30 min (4 jobs in parallel)
+./2_yearly_strategy_analysis.sh --year 2025 --max-jobs 4
+# Runs 4 jobs in parallel (~30 min, same $12-15 cost)
 ```
-
-**Option 2: Reduce Executors per Job** (Slower)
-
-```yaml
-# In config.yaml, change:
-snapshot:
-  max_executors: 2    # Instead of 4
-```
-
-```bash
-# Then can run 2 jobs in parallel
-./2_yearly_strategy_analysis.sh --max-jobs 2
-# Each job takes ~20 min (slower), but works within quota
-```
-
-### AWS vCPU Requirements by Scenario
-
-| Scenario | vCPU Needed | Works Default? | Action |
-|----------|-------------|---|--------|
-| Sequential (1 job) | 16 vCPU | ✅ YES | Just run! |
-| 2 jobs parallel | 32 vCPU | ❌ NO | Request increase |
-| 4 jobs parallel | 64 vCPU | ❌ NO | Request increase |
-| 12 jobs parallel (original) | 192 vCPU | ❌ NO | Not feasible |
-
-### Check Current Quota
-
-```bash
-aws service-quotas get-service-quota \
-  --service-code emr-serverless \
-  --quota-code vCPU \
-  --query 'Quota.Value' --output text
-
-# Should return: 16 (default)
-```
-
-### Performance Benchmarks
-
-| Scenario | Time | Cost | Notes |
-|----------|------|------|-------|
-| 1 day | ~5 min | $1 | |
-| 1 month | ~10 min | $2 | |
-| Full year (sequential) | ~120 min | $12-15 | ✅ Default, no quota increase |
-| Full year (2 parallel) | ~60 min | $12-15 | Needs 32 vCPU quota increase |
-| Full year (4 parallel) | ~30 min | $12-15 | Needs 64 vCPU quota increase |
-
-**Note:** Cost is identical for all scenarios — only wall time changes.
 
 ---
 
@@ -779,6 +550,33 @@ aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 
 # Teardown all AWS resources (EMR app + IAM role)
 ./infrastructure/terminate_all.sh
+```
+
+---
+
+## Development Workflow
+
+### Daily: Edit Code → Deploy → Test
+
+```bash
+# 1. Edit your strategy code
+# 2. Run one command to package, upload, and test:
+./infrastructure/deploy_and_submit.sh strategy
+
+# Other modes:
+./infrastructure/deploy_and_submit.sh bootstrap   # Initial data load
+./infrastructure/deploy_and_submit.sh daily       # Daily data load
+```
+
+### Adding New Python Dependencies
+
+```bash
+# 1. Update pyproject.toml with new dependency
+# 2. Rebuild Docker image and update EMR app:
+./infrastructure/build_image.sh
+
+# 3. Run regression tests to verify:
+./tests/regression_strategy.sh
 ```
 
 ---

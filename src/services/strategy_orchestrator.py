@@ -13,7 +13,7 @@ class StrategyOrchestrator:
         self.config = config
         self.spark = spark
 
-    def run(self, strategy_names=None, mode=None, start_date=None, end_date=None):
+    def run(self, strategy_names=None, mode=None, start_date=None, end_date=None, clear_existing=False):
         """
         Execute strategies based on batch_mode (snapshot/lookback/full).
 
@@ -22,9 +22,14 @@ class StrategyOrchestrator:
             mode: Force specific batch mode ("snapshot", "lookback", "full") - overrides config
             start_date: Process only this date range (optional, string "YYYY-MM-DD")
             end_date: Process only this date range (optional, string "YYYY-MM-DD")
+            clear_existing: If True, drop existing gold tables before writing (use for single runs)
         """
         silver_table = self.config.get_table_path('silver')
         strategies_config = self.config.get('strategies', {})
+
+        # If clear_existing flag is set and date range provided, clear the tables first
+        if clear_existing and start_date and end_date:
+            self._clear_gold_tables(strategies_config)
 
         # Convert date strings to datetime objects if provided
         if start_date:
@@ -66,6 +71,37 @@ class StrategyOrchestrator:
             logger.warning("⚠️ No active strategies found in any mode.")
 
         return results
+
+    def _clear_gold_tables(self, strategies_config):
+        """Drop existing gold tables for all active strategies."""
+        logger.info("🗑️  Clearing existing gold tables...")
+
+        # Handle None or empty strategies_config
+        if not strategies_config:
+            logger.warning("⚠️  No strategies configuration found, skipping table clearing")
+            return
+
+        # Collect all active strategies across all modes
+        all_strategies = []
+        for mode_key in ['snapshot', 'lookback', 'full']:
+            mode_strategies = strategies_config.get(mode_key, [])
+            if mode_strategies:  # Only extend if not None
+                all_strategies.extend(mode_strategies)
+
+        for strategy in all_strategies:
+            if strategy and strategy.get('active') == 'Y':
+                strategy_name = strategy.get('class')
+                if not strategy_name:
+                    logger.warning("⚠️  Strategy missing 'class' field, skipping")
+                    continue
+
+                gold_table = f"{self.config.catalog}.{self.config.db_name}.gold_{strategy_name.lower()}"
+
+                try:
+                    self.spark.sql(f"DROP TABLE IF EXISTS {gold_table}")
+                    logger.info(f"✅ Dropped {gold_table}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Could not drop {gold_table}: {e}")
 
     def _should_run_mode(self, mode, forced_mode):
         """Check if mode should run."""
@@ -253,7 +289,26 @@ class StrategyOrchestrator:
             logger.info(f"🔍 {strategy_name}: Filtering to non-overlapping dates >= {output_start_date}")
             gold_df = gold_df.filter(F.col("trade_date") >= output_start_date)
 
-        # 5. Write to gold table
+        # 4b. For snapshot mode with explicit date range, filter output to ensure only specified dates are written
+        if start_date and end_date and not output_start_date:
+            logger.info(f"🔍 {strategy_name}: Filtering output to trade_date range {start_date} to {end_date}")
+            gold_df = gold_df.filter(
+                (F.col("trade_date") >= start_date) &
+                (F.col("trade_date") < end_date)
+            )
+
+        # 5. Verify output dates before writing
+        output_count = gold_df.count()
+        if output_count > 0:
+            min_trade_date = gold_df.agg(F.min("trade_date")).collect()[0][0]
+            max_trade_date = gold_df.agg(F.max("trade_date")).collect()[0][0]
+            logger.info(f"📊 {strategy_name}: Output contains {output_count:,} rows, "
+                       f"trade_date range: {min_trade_date} to {max_trade_date}")
+        else:
+            logger.warning(f"⚠️  {strategy_name}: Output is empty, nothing to write")
+            return
+
+        # 6. Write to gold table
         gold_table = f"{self.config.catalog}.{self.config.db_name}.gold_{strategy_name.lower()}"
 
         # Check if table exists
