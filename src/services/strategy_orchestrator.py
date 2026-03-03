@@ -41,8 +41,8 @@ class StrategyOrchestrator:
 
         # Execute snapshot strategies (monthly batching, parallel)
         if self._should_run_mode('snapshot', mode):
-            snapshot_strategies = strategies_config.get('snapshot', [])
-            active_snapshot = [s for s in snapshot_strategies if s.get('active') == 'Y']
+            snapshot_strategies = strategies_config.get('snapshot') or []
+            active_snapshot = [s for s in snapshot_strategies if s and s.get('active') == 'Y']
             if active_snapshot:
                 logger.info("🔄 Executing SNAPSHOT strategies (monthly batching, parallel)...")
                 snapshot_results = self._execute_snapshot_strategies(active_snapshot, silver_table,
@@ -51,8 +51,8 @@ class StrategyOrchestrator:
 
         # Execute lookback strategies (sliding windows, sequential)
         if self._should_run_mode('lookback', mode):
-            lookback_strategies = strategies_config.get('lookback', [])
-            active_lookback = [s for s in lookback_strategies if s.get('active') == 'Y']
+            lookback_strategies = strategies_config.get('lookback') or []
+            active_lookback = [s for s in lookback_strategies if s and s.get('active') == 'Y']
             if active_lookback:
                 logger.info("🔄 Executing LOOKBACK strategies (sliding windows, sequential)...")
                 lookback_results = self._execute_lookback_strategies(active_lookback, silver_table)
@@ -60,8 +60,8 @@ class StrategyOrchestrator:
 
         # Execute full strategies (single large job)
         if self._should_run_mode('full', mode):
-            full_strategies = strategies_config.get('full', [])
-            active_full = [s for s in full_strategies if s.get('active') == 'Y']
+            full_strategies = strategies_config.get('full') or []
+            active_full = [s for s in full_strategies if s and s.get('active') == 'Y']
             if active_full:
                 logger.info("🔄 Executing FULL strategies (single job, entire dataset)...")
                 full_results = self._execute_full_strategies(active_full, silver_table)
