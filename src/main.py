@@ -16,12 +16,21 @@ def initialize_config():
     parser.add_argument('--bootstrap', action='store_true')
     parser.add_argument('--strategies', nargs='*', help='Optional list of strategy names')
 
+    # Strategy batch parameters (for monthly batching)
+    parser.add_argument('--start-date', type=str, help='Batch start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', type=str, help='Batch end date (YYYY-MM-DD)')
+    parser.add_argument('--batch-mode', choices=['snapshot', 'lookback', 'full'],
+                       help='Force specific batch mode (overrides config)')
+    parser.add_argument('--clear-existing', action='store_true',
+                       help='Clear existing gold tables before writing (use for single month runs)')
+
     args = parser.parse_args()
     config = ConfigManager.get_instance()
     spark = SparkSessionBuilder.create()
-    return config, spark, args.bootstrap, args.mode, args.strategies
+    return config, spark, args.bootstrap, args.mode, args.strategies, args.start_date, args.end_date, args.batch_mode, args.clear_existing
 
-def orchestrate(config, spark, mode, bootstrap_mode, strategy_names=None):
+def orchestrate(config, spark, mode, bootstrap_mode, strategy_names=None,
+                start_date=None, end_date=None, batch_mode=None, clear_existing=False):
     if mode == 'dataload':
         logger.info(f"🚀 Launching Data Load (Bootstrap: {bootstrap_mode})")
         orchestrator = DataLoadOrchestrator(config, spark)
@@ -29,9 +38,18 @@ def orchestrate(config, spark, mode, bootstrap_mode, strategy_names=None):
         return None
 
     elif mode == 'strategy':
-        logger.info("🎯 Launching Strategy SIT")
+        logger.info("🎯 Launching Strategy Execution")
+        if start_date:
+            logger.info(f"   Batch: {start_date} to {end_date}")
+        if batch_mode:
+            logger.info(f"   Batch Mode: {batch_mode}")
+        if clear_existing:
+            logger.info(f"   ⚠️  Will clear existing gold tables before writing")
+
         orchestrator = StrategyOrchestrator(config, spark)
-        return orchestrator.run(strategy_names=strategy_names)
+        return orchestrator.run(strategy_names=strategy_names, mode=batch_mode,
+                               start_date=start_date, end_date=end_date,
+                               clear_existing=clear_existing)
 
 def verify_gold_layer(spark, config, strategy_names=None) -> None:
     """Verify gold tables for each strategy that ran."""
@@ -52,8 +70,9 @@ def clean_up(spark) -> None:
     spark.stop()
 
 def main():
-    config, spark, bootstrap, mode, strategy_names = initialize_config()
-    results = orchestrate(config, spark, mode, bootstrap, strategy_names)
+    config, spark, bootstrap, mode, strategy_names, start_date, end_date, batch_mode, clear_existing = initialize_config()
+    results = orchestrate(config, spark, mode, bootstrap, strategy_names,
+                         start_date, end_date, batch_mode, clear_existing)
 
     if mode == 'strategy' and results:
         # Only verify gold tables for strategies that succeeded

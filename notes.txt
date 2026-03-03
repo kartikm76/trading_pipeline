@@ -13,18 +13,72 @@ colima start --arch aarch64 --vm-type=vz --vz-rosetta
 docker buildx build   --platform linux/amd64,linux/arm64   -t 949934295366.dkr.ecr.us-east-1.amazonaws.com/trading-pipeline:latest   --push .
 
 ## Potential Next Steps:
-1. Fix the --strategies bug + IronCondorStrategy issues
-There are two code bugs worth addressing:
-a) StrategyFactory.get_strategy() only searches active_strategy_info (line 14 of strategy_factory.py), which filters for active: "Y". So even though strategy_orchestrator.py bypasses the active check when --strategies is passed, the factory will throw "No strategy found for class IronCondorStrategy" because it's active: "N". The override is broken.
-b) IronCondorStrategy has bugs:
-__init__ takes config but not underlying, yet references self.underlying (line 8) — will crash with NameError
-required_columns references expiration and strike but Silver table uses expiry_date and strike_price
-Missing logic() abstract method implementation
-Missing cast_decimals() call in _process_partition
 
-2. deploy_and_submit performance optimization
-The current implementation of deploy_and_submit.sh can be optimized for better performance.
-Consider parallelizing the upload and submission steps to reduce overall execution time.
 
-3. Run AWS regression of dataload and strategy
-4. Add a new strategy and test it locally and AWS
+2. Optimize the deploy_and_submit script for better performance.
+3. Run AWS regression of dataload and strategy.
+4. Add a new strategy and test it locally and AWS.
+
+
+./2_yearly_strategy_analysis.sh --year 2024 --snapshot --max-jobs 1
+./infrastructure/deploy_and_submit.sh strategy --start-date 2025-01-01 --end-date 2025-02-01
+
+
+┌─────────────────────────────────────────────────────────┐
+│ EMR Application (Application ID: 00g35nv23d1lkf09)      │
+│                                                         │
+│  ┌────────────────────────────────────────────────────┐│
+│  │ JOB 1: Batch 1 (Jan 2025)                         ││
+│  │ ┌──────────┐  ┌──────────┐  ┌──────────┐ ┌──────┐││
+│  │ │Executor 1│  │Executor 2│  │Executor 3│ │Exec 4││
+│  │ │ 4 vCPU   │  │ 4 vCPU   │  │ 4 vCPU   │ │4 vCPU││
+│  │ └──────────┘  └──────────┘  └──────────┘ └──────┘││
+│  │ Total: 16 vCPU (fills entire quota!)              ││
+│  └────────────────────────────────────────────────────┘│
+│                                                         │
+│  ┌────────────────────────────────────────────────────┐│
+│  │ JOB 2: Batch 2 (Feb 2025)                         ││
+│  │ ┌──────────┐  ┌──────────┐  ┌──────────┐ ┌──────┐││
+│  │ │Executor 1│  │Executor 2│  │Executor 3│ │Exec 4││
+│  │ │ 4 vCPU   │  │ 4 vCPU   │  │ 4 vCPU   │ │4 vCPU││
+│  │ └──────────┘  └──────────┘  └──────────┘ └──────┘││
+│  │ Total: 16 vCPU (would EXCEED quota!)              ││
+│  │ → QUEUED or FAILED ❌                              ││
+│  └────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────┘
+
+
+Your AWS Account has: 16 vCPU TOTAL quota
+│
+├─ Each Executor needs: 4 vCPU
+│  └─ So max 4 executors per job (4 × 4 = 16)
+│
+├─ Each Job needs: 16 vCPU (4 executors × 4 vCPU each)
+│  └─ So max 1 job can run at a time
+│
+└─ If you run 2 jobs in parallel: 16 + 16 = 32 vCPU → EXCEEDS QUOTA ❌
+
+
+# Running your batch for Jan 2025:
+./infrastructure/deploy_and_submit.sh strategy --start-date 2025-01-01 --end-date 2025-02-01
+
+# This creates:
+#   1 EMR Job
+#   ├─ 4 Executors (from config.yaml: max_executors: 4)
+#   ├─ Each Executor: 4 vCPU (Spark default)
+#   └─ Total: 16 vCPU used (= your entire quota)
+#
+# Status: ✅ RUNNING (fits within quota)
+
+# If you then run Feb 2025 WHILE Jan is still running:
+./infrastructure/deploy_and_submit.sh strategy --start-date 2025-02-01 --end-date 2025-03-01
+
+# This creates:
+#   Another EMR Job
+#   ├─ 4 Executors
+#   ├─ Each Executor: 4 vCPU
+#   └─ Total: 16 vCPU needed
+#
+# Total needed: 16 (Jan) + 16 (Feb) = 32 vCPU
+# But you only have: 16 vCPU
+# Status: ❌ QUEUED or FAILED (exceeds quota)

@@ -103,13 +103,15 @@ class IronCondorStrategy(BaseStrategy):
                 .over(GROUP_KEY)
         )
 
-        s_c = calls_ranked.filter(pl.col("strike_rank") == 1).select([
+        # 2nd highest = short call
+        s_c = calls_ranked.filter(pl.col("strike_rank") == 2).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_short_call"),
             pl.col("mid_price").alias("price_short_call"),
         ])
 
-        l_c = calls_ranked.filter(pl.col("strike_rank") == 2).select([
+        # highest = long call
+        l_c = calls_ranked.filter(pl.col("strike_rank") == 1).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_long_call"),
             pl.col("mid_price").alias("price_long_call"),
@@ -122,13 +124,15 @@ class IronCondorStrategy(BaseStrategy):
                 .over(GROUP_KEY)
         )
 
-        s_p = puts_ranked.filter(pl.col("strike_rank") == 1).select([
+        # 2nd lowest = short put
+        s_p = puts_ranked.filter(pl.col("strike_rank") == 2).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_short_put"),
             pl.col("mid_price").alias("price_short_put"),
         ])
 
-        l_p = puts_ranked.filter(pl.col("strike_rank") == 2).select([
+        # lowest = long put
+        l_p = puts_ranked.filter(pl.col("strike_rank") == 1).select([
             *[pl.col(c) for c in GROUP_KEY],
             pl.col("strike_price").alias("strike_long_put"),
             pl.col("mid_price").alias("price_long_put"),
@@ -232,6 +236,7 @@ class IronCondorStrategy(BaseStrategy):
     def _process_partition(self, pdf_iterator):
         import logging
         import pandas as pd
+        import numpy as np
         log = logging.getLogger("IronCondorStrategy.executor")
 
         # Concatenate ALL batches in this partition before processing.
@@ -252,6 +257,13 @@ class IronCondorStrategy(BaseStrategy):
             ldf = pl.from_pandas(full_pdf).lazy()
             res = self.logic(ldf)
             result_pdf = res.collect().to_pandas()
+
+            # Ensure date columns are proper datetime.date objects for Spark schema conversion
+            if "trade_date" in result_pdf.columns:
+                result_pdf["trade_date"] = pd.to_datetime(result_pdf["trade_date"]).dt.date
+            if "expiration" in result_pdf.columns:
+                result_pdf["expiration"] = pd.to_datetime(result_pdf["expiration"]).dt.date
+
             log.info(f"Partition: yielding {len(result_pdf)} iron condor signals")
             yield result_pdf
         except Exception as e:

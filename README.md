@@ -11,6 +11,8 @@ A production-grade options chain data pipeline built on **PySpark**, **Apache Ic
 - [One-Time AWS Setup](#one-time-aws-setup)
 - [Installation](#installation)
 - [Running the Pipeline](#running-the-pipeline)
+- [Full-Year Strategy Analysis](#full-year-strategy-analysis)
+- [AWS vCPU Constraints](#aws-vcpu-constraints)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
 - [Adding a New Strategy](#adding-a-new-strategy)
@@ -81,7 +83,7 @@ docker buildx version
 
 ### AWS Credentials
 
-Configure your AWS credentials with access to the target account:
+Configure AWS credentials with access to the target account:
 ```bash
 aws configure
 # Region: us-east-1
@@ -102,7 +104,7 @@ mkdir -p data/raw/{landing,staging,processed}
 | `data/raw/staging/` | Active processing zone — CSVs are read from here during dataload |
 | `data/raw/processed/` | Archived CSVs after successful processing |
 
-> **Note**: In dev mode, the pipeline reads CSVs from `data/raw/staging/`. Place your CSV files there before running dataload.
+> **Note**: In dev mode, the pipeline reads CSVs from `data/raw/staging/`. Place CSV files there before running dataload.
 
 ---
 
@@ -137,66 +139,70 @@ uv sync
 
 ## Running the Pipeline
 
+> **👉 See [PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md) for all commands, parameters, and troubleshooting**
+
 Two environments are available:
 
 - **`dev`** — runs locally with PySpark (fast, no AWS needed)
 - **`aws`** — submits a job to AWS EMR Serverless
 
-### 1. Data Loading
-
-Loads CSV files through **Landing → Bronze → Silver**.
-
-| Action                                           | Dev (local) | AWS |
-|--------------------------------------------------|---|---|
-| `First-time load (create tables from scratch)`   | `./0_local_pipeline_run.sh` | `./0_aws_pipeline_run.sh` |
-| `Daily incremental load (append new data)`       | `ENV=dev uv run python src/main.py --mode dataload` | `./infrastructure/deploy_and_submit.sh daily` |
-| `Regression test`                                | `./tests/regression_dataload.sh dev` | `./tests/regression_dataload.sh aws` |
-| `Regression test (both envs)`                    | `./tests/regression_dataload.sh` | |
-| `Regression + rebuild Docker image`              | `./tests/regression_dataload.sh --rebuild` | |
-
-> **Dev note**: Place CSV files in `data/raw/landing/`. The local script (`0_local_pipeline_run.sh`) handles the full `landing → staging → processed` lifecycle — just like `0_aws_pipeline_run.sh` does on AWS with S3.
-
-### 2. Strategy
-
-Reads Silver tables and generates trading signals into **Gold**.
-
-| Action                              | Dev (local) | AWS |
-|-------------------------------------|---|---|
-| `Run all active strategies`         | `./1_local_strategy_run.sh` | `./1_aws_strategy_run.sh` |
-| `Run a specific strategy`           | `./1_local_strategy_run.sh --strategies LaymanSPYStrategy` | `./1_aws_strategy_run.sh --strategies LaymanSPYStrategy` |
-| `Regression test`                   | `./tests/regression_strategy.sh dev` | `./tests/regression_strategy.sh aws` |
-| `Regression test (both envs)`       | `./tests/regression_strategy.sh` | |
-| `Regression + rebuild Docker image` | `./tests/regression_strategy.sh --rebuild` | |
-
-> **`--strategies` flag**: Bypasses the `active: "Y"` check in `config.yaml`, letting you run any strategy without editing config. Without the flag, only strategies marked `active: "Y"` will run.
-
-### Common Workflows
-
-#### Data Loading
+### Quick Start
 
 ```bash
-# First-time load (local) — moves CSVs from landing/ → staging/ → processed/
-./0_local_pipeline_run.sh
+# Daily strategy run (latest data)
+./infrastructure/deploy_and_submit.sh strategy
 
-# First-time load (AWS) — loads all CSVs from S3 landing zone
-./0_aws_pipeline_run.sh
+# Full year 2025 (all 12 months)
+./2_yearly_strategy_analysis.sh --year 2025
 
-# Dependency change — rebuild Docker image + run full dataload regression
-./tests/regression_dataload.sh --rebuild
+# Single month test
+./infrastructure/deploy_and_submit.sh strategy \
+  --start-date 2025-01-01 --end-date 2025-02-01 --clear-existing
 ```
 
-#### Strategy
+For detailed commands, parameters, and troubleshooting → **[PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md)**
+
+---
+
+## Full-Year Strategy Analysis
+
+> **👉 For commands, parameters, and troubleshooting, see [PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md)**
+
+Process the entire 2025 dataset (2.5B rows) with monthly batching:
 
 ```bash
-# Day-to-day: code change → quick local check → deploy to AWS
-./1_local_strategy_run.sh                 # run locally (~30s)
-./1_aws_strategy_run.sh                   # deploy to AWS
+./2_yearly_strategy_analysis.sh --year 2025
+# 12 sequential jobs, ~2 hours, $12-15 total cost
+```
 
-# Run a specific strategy locally
-./1_local_strategy_run.sh --strategies LaymanSPYStrategy
+**Key points:**
+- Automatically batches by month (~200M rows each, ~10 min per batch)
+- Respects AWS 16 vCPU quota (sequential by default)
+- Non-overlapping output — each trade_date appears exactly once
+- Iceberg partitioned on S3
 
-# Dependency change — rebuild Docker image + run full strategy regression
-./tests/regression_strategy.sh --rebuild
+**Result:** `gold_ironcondorstrategy` table (~2.5B rows, 252 trade_dates)
+
+---
+
+## AWS vCPU Constraints
+
+> **👉 For detailed explanation and quota increase procedures, see [PIPELINE_EXECUTION.md](PIPELINE_EXECUTION.md)**
+
+**Personal AWS accounts have a 16 vCPU quota by default.**
+
+With 4 executors × 4 vCPU = 16 vCPU per job, only **1 job runs at a time**.
+
+The pipeline respects this by default:
+```bash
+./2_yearly_strategy_analysis.sh --year 2025
+# Runs 12 batches sequentially (~2 hours, $12-15)
+```
+
+To parallelize (optional): Request AWS quota increase to 64 vCPU, then:
+```bash
+./2_yearly_strategy_analysis.sh --year 2025 --max-jobs 4
+# Runs 4 jobs in parallel (~30 min, same $12-15 cost)
 ```
 
 ---
@@ -259,6 +265,42 @@ trading_pipeline/
 
 All settings live in **`config.yaml`**. Key sections:
 
+### Strategy Organization by Batch Mode
+
+Strategies are organized by execution mode to determine how they run:
+
+```yaml
+strategies:
+  # Snapshot: Monthly batching, parallel execution (if quota allows)
+  # No lookback needed — decisions from single trade_date snapshot
+  snapshot:
+    - class: "IronCondorStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 0
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date", "expiry_date"]
+
+  # Lookback: Sliding windows, sequential execution
+  # Needs prior N days for context (momentum, IV percentile, etc.)
+  lookback:
+    # Example (disabled for now):
+    # - class: "MomentumStrategy"
+    #   active: "Y"
+    #   underlying: "SPY"
+    #   lookback_days: 5
+    #   output_mode: "non_overlapping"
+
+  # Full: Single large job for entire dataset
+  # Requires full visibility (correlation, position tracking, etc.)
+  full:
+    # Example (disabled for now):
+    # - class: "CorrelationArbitrageStrategy"
+    #   active: "Y"
+    #   underlying: "SPY"
+    #   lookback_days: 252
+```
+
 ### Environment Blocks
 
 The pipeline auto-selects the config block based on the `ENV` environment variable:
@@ -267,20 +309,6 @@ The pipeline auto-selects the config block based on the `ENV` environment variab
 |-----------|-------------|--------|---------|
 | `dev` (default) | `dev:` | You, locally | Local Hadoop |
 | `aws` | `aws:` | EMR Serverless (via `.spark_config`) | AWS Glue + S3 |
-
-### Strategy Switchboard
-
-Toggle strategies on/off without code changes:
-
-```yaml
-strategies:
-  - class: "LaymanSPYStrategy"
-    active: "Y"              # ← Will run
-    underlying: "SPY"
-  - class: "IronCondorStrategy"
-    active: "N"              # ← Skipped
-    underlying: "SPY"
-```
 
 ### Scaling
 
@@ -293,16 +321,38 @@ scaling:
     executor_memory: "16G"
     driver_memory: "16G"
   daily:
-    max_executors: 2
-    executor_memory: "8G"
-    driver_memory: "8G"
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+  # Snapshot strategies (monthly batching)
+  snapshot:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 200
+  # Lookback strategies (sliding windows)
+  lookback:
+    max_executors: 4
+    executor_memory: "16G"
+    driver_memory: "16G"
+    shuffle_partitions: 200
+  # Full dataset strategies
+  full:
+    max_executors: 8
+    executor_memory: "32G"
+    driver_memory: "32G"
+    shuffle_partitions: 500
 ```
+
+> **Note:** Snapshot strategies default to 4 executors × 16GB = 16 vCPU per job, which matches the AWS personal account quota. For parallelism, request a quota increase.
 
 ---
 
 ## Adding a New Strategy
 
-1. Create `src/strategies/my_strategy.py`:
+### Step 1: Create Strategy Class
+
+Create `src/strategies/my_strategy.py`:
 
 ```python
 import polars as pl
@@ -317,7 +367,7 @@ class MyStrategy(BaseStrategy):
                 "mid_price", "option_type"]
 
     def logic(self, ldf: pl.LazyFrame) -> pl.LazyFrame:
-        # Your Polars-based signal logic here
+        # Polars-based signal logic here
         return ldf.with_columns(
             pl.when(pl.col("mid_price") < 2.0)
               .then(pl.lit("BUY_CALL"))
@@ -329,17 +379,72 @@ class MyStrategy(BaseStrategy):
         pass  # Not used — logic() is the primary engine
 ```
 
-2. Register in `src/strategies/__init__.py`
-3. Add to `config.yaml`:
-```yaml
-strategies:
-  - class: "MyStrategy"
-    active: "Y"
-    underlying: "SPY"
-```
-4. Run: `./1_aws_strategy_run.sh`
+### Step 2: Register Strategy
 
-The orchestrator will create a Gold table named `gold_mystrategy` automatically.
+Add to `src/strategies/__init__.py`:
+
+```python
+from .my_strategy import MyStrategy
+```
+
+### Step 3: Add to config.yaml
+
+Determine batch mode based on strategy needs:
+
+```yaml
+# If no lookback needed (snapshot strategy):
+strategies:
+  snapshot:
+    - class: "MyStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 0
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date"]
+
+# OR if it needs prior N days (lookback strategy):
+strategies:
+  lookback:
+    - class: "MyStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 5
+      output_mode: "non_overlapping"
+      group_key: ["underlying", "trade_date"]
+
+# OR if it needs entire dataset (full strategy):
+strategies:
+  full:
+    - class: "MyStrategy"
+      active: "Y"
+      underlying: "SPY"
+      lookback_days: 252
+      output_mode: "non_overlapping"
+      group_key: ["underlying"]
+```
+
+### Step 4: Run
+
+The orchestrator automatically:
+- Detects batch mode from config
+- Creates gold table named `gold_mystrategy`
+- Handles all batching, windowing, and output filtering
+
+```bash
+# Run locally
+./1_local_strategy_run.sh
+
+# Or deploy to AWS
+./1_aws_strategy_run.sh
+```
+
+### Batch Mode Selection Guide
+
+| Mode | Use When | Example |
+|------|----------|---------|
+| **snapshot** | No lookback needed, single trade_date decisions | Iron Condor, Calendar Spreads |
+| **lookback** | Need prior N days for context | Momentum, IV Percentile, Technical Indicators |
+| **full** | Need entire dataset visibility | Correlation, Position Tracking, Greeks Curves |
 
 ---
 
@@ -445,6 +550,33 @@ aws s3 rm s3://trading-pipeline/iceberg-warehouse/ --recursive
 
 # Teardown all AWS resources (EMR app + IAM role)
 ./infrastructure/terminate_all.sh
+```
+
+---
+
+## Development Workflow
+
+### Daily: Edit Code → Deploy → Test
+
+```bash
+# 1. Edit your strategy code
+# 2. Run one command to package, upload, and test:
+./infrastructure/deploy_and_submit.sh strategy
+
+# Other modes:
+./infrastructure/deploy_and_submit.sh bootstrap   # Initial data load
+./infrastructure/deploy_and_submit.sh daily       # Daily data load
+```
+
+### Adding New Python Dependencies
+
+```bash
+# 1. Update pyproject.toml with new dependency
+# 2. Rebuild Docker image and update EMR app:
+./infrastructure/build_image.sh
+
+# 3. Run regression tests to verify:
+./tests/regression_strategy.sh
 ```
 
 ---

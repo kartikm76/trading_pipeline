@@ -1,6 +1,14 @@
 # Test Environment Setup Guide
 
-This guide walks you through setting up a test environment to safely test the performance optimizations without touching production data.
+This guide walks you through setting up a test environment to safely test performance optimizations without touching production data.
+
+## ✅ What's Been Pre-Configured
+
+- **config.yaml** — Test environment block added (test: {...})
+- **config_manager.py** — Automatically uses `trading_db_test` when `ENV=test`
+- **0_aws_pipeline_run_test.sh** — Test pipeline orchestrator
+  - Bootstrap mode (default): Process ALL files in ONE EMR job
+  - Batch mode (`--batch`): Process 15 files at a time (for comparison)
 
 ---
 
